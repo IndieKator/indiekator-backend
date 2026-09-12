@@ -1,4 +1,7 @@
 .env
 /.agents
+.venv/
+.uv-cache-fgi/
+.pytest_cache/
 __pycache__/
 *.py[cod]

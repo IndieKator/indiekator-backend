@@ -9,12 +9,17 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "pydantic-settings>=2.6.0",
     "supabase>=2.10.0",
-    "pytrends>=4.9.2",
+    "pytrends-modern>=0.2.13",
     "pandas>=2.2.0",
     "numpy>=2.0.0",
     "httpx>=0.28.0",
     "apscheduler>=3.10.0",
     "python-dotenv>=1.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
 ]
 
 [project.scripts]
