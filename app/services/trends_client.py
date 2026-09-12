@@ -1,5 +1,5 @@
 import pandas as pd
-from pytrends.request import TrendReq
+from pytrends_modern import TrendReq
 
 KEYWORD = "ihsg"
 TIMEFRAME = "today 12-m"

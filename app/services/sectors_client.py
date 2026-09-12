@@ -1,5 +1,5 @@
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pandas as pd
@@ -16,7 +16,9 @@ def fetch_ihsg_prices(lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> pd.DataFram
     api_url = f"https://api.sectors.app/v2/index-daily/{INDEX_CODE}/"
     headers = {"Authorization": settings.sectors_api_key}
 
-    end_date = datetime.now()
+    # Sectors validates dates against its UTC trading-day boundary. Using a
+    # local naive timestamp can request tomorrow's date in UTC+ timezones.
+    end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=lookback_days)
     all_data: list[dict] = []
     current_end = end_date
