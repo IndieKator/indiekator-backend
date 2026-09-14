@@ -124,11 +124,18 @@ All application routes are prefixed with `/api`.
 | Method | Endpoint | Description |
 | --- | --- | --- |
 | `GET` | `/api/health` | Returns service status and the latest successful ingestion timestamp. |
-| `GET` | `/api/fgi` | Returns the latest FGI snapshot and roughly six months of weekly history. Refreshes automatically when the newest snapshot is older than 24 hours. |
+| `GET` | `/api/fgi` | Returns the latest FGI snapshot together with roughly six months of weekly history. |
+| `GET` | `/api/fgi/current` | Returns the latest index value, zone, summary, market values, component scores, and week-over-week deltas. |
+| `GET` | `/api/fgi/history?range=1y` | Returns chronological weekly points, oldest first. Accepted ranges: `3m`, `6m`, `1y`, `all`. |
+| `GET` | `/api/fgi/breakdown` | Returns the latest index value and its weighted price-momentum and public-sentiment components. |
 | `GET` | `/api/zones` | Returns historical Fear & Greed zone periods. |
 | `POST` | `/api/admin/ingest` | Runs a manual ingestion. Requires the `X-Admin-Secret` header. |
 
-`GET /api/fgi` returns `503` when no snapshot exists at all, and sets `is_stale` to `true` when it is serving an outdated snapshot because a refresh attempt failed. `GET /api/zones` returns `404` until a successful ingestion has produced data.
+Every `/api/fgi*` endpoint refreshes automatically when the newest snapshot is older than 24 hours. Each returns `503` when no snapshot exists at all; `/api/fgi` and `/api/fgi/current` set `is_stale` to `true` when serving an outdated snapshot because a refresh attempt failed. `GET /api/zones` returns `404` until a successful ingestion has produced data.
+
+`GET /api/fgi/breakdown` reports each component's raw score alongside the weight the engine applies, plus its `contribution` (`value × weight`). Contributions sum to the reported index value, so the breakdown reconstructs the score rather than approximating it.
+
+`GET /api/fgi/current` reports deltas as `vs_last_week` and `vs_month_ago`. The index is weekly, so these are week-over-week comparisons against the previous snapshot and the snapshot four weeks back. A delta is `null` when there is not enough history to compute it.
 
 ## Index Methodology
 
