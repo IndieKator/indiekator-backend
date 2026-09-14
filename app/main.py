@@ -5,7 +5,7 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import admin, fgi, sentiment, zones
+from app.api.routes import admin, fgi, zones
 from app.config import get_settings
 from app.services.ingestion import run_ingestion
 
@@ -51,7 +51,6 @@ def create_app() -> FastAPI:
 
     app.include_router(admin.router, prefix="/api")
     app.include_router(fgi.router, prefix="/api")
-    app.include_router(sentiment.router, prefix="/api")
     app.include_router(zones.router, prefix="/api")
 
     return app
