@@ -1,12 +1,12 @@
 # IndieKator Backend
 
-A FastAPI service that calculates and exposes an IHSG (Indonesia Stock Exchange Composite Index) Fear & Greed Index. The service combines IHSG price momentum with public interest in the `ihsg` search term from Google Trends, persists the calculated records in Supabase, and provides a JSON API for the IndieKator dashboard.
+A FastAPI service that calculates and exposes an IHSG (Indonesia Stock Exchange Composite Index) Fear & Greed Index. The service combines IHSG price momentum with public search interest from Google Trends, persists weekly snapshots in Supabase, and provides a JSON API for the IndieKator dashboard.
 
 ## Features
 
-- IHSG Fear & Greed score on a 0–100 scale
-- Daily ingestion from Sectors.app and Google Trends
-- Supabase-backed sentiment history, zone periods, and ingestion-run records
+- Weekly IHSG Fear & Greed Index (FGI) on a 0–100 scale
+- Ingestion from Sectors.app and Google Trends
+- Supabase-backed snapshot history, zone periods, and ingestion-run records
 - Manual ingestion endpoint protected by an admin secret
 - Automatic daily ingestion at 07:00 Asia/Jakarta
 - OpenAPI documentation through FastAPI
@@ -101,11 +101,13 @@ Invoke-RestMethod `
   -Headers @{ "X-Admin-Secret" = "YOUR_ADMIN_SECRET" }
 ```
 
-A successful response includes the ingestion status, number of daily records upserted, and a confirmation message.
+A successful response includes the ingestion status, number of weekly snapshots upserted, and a confirmation message.
 
 ## Scheduled Ingestion
 
-When the application starts, APScheduler registers a daily ingestion job at **07:00 Asia/Jakarta (WIB)**. The job uses the same ingestion pipeline as the manual endpoint.
+When the application starts, APScheduler registers a daily ingestion job at **07:00 Asia/Jakarta (WIB)**. The job uses the same ingestion pipeline as the manual endpoint: there is a single entry point, which upserts `fgi_snapshots`, rebuilds `zone_periods` from those snapshots, and records the attempt in `ingestion_runs`.
+
+The daily cadence against a weekly index is intentional. Each run recomputes the current in-progress week and refreshes recent Trends values, which providers may revise after the fact.
 
 For production monitoring, check the `ingestion_runs` data in Supabase. The scheduler is process-local and does not provide distributed locking, persistent job storage, or automatic retries.
 
@@ -122,38 +124,56 @@ All application routes are prefixed with `/api`.
 | Method | Endpoint | Description |
 | --- | --- | --- |
 | `GET` | `/api/health` | Returns service status and the latest successful ingestion timestamp. |
-| `GET` | `/api/sentiment/current` | Returns the latest Fear & Greed score, zone, summary, market values, and score deltas. |
-| `GET` | `/api/sentiment/history?range=1y` | Returns chronological sentiment points. Accepted ranges: `3m`, `6m`, `1y`, `all`. |
-| `GET` | `/api/sentiment/breakdown` | Returns the latest score and its price-momentum and public-sentiment components. |
+| `GET` | `/api/fgi` | Returns the latest FGI snapshot and roughly six months of weekly history. Refreshes automatically when the newest snapshot is older than 24 hours. |
 | `GET` | `/api/zones` | Returns historical Fear & Greed zone periods. |
 | `POST` | `/api/admin/ingest` | Runs a manual ingestion. Requires the `X-Admin-Secret` header. |
 
-The public sentiment and zone endpoints return `404` until a successful ingestion has produced data.
+`GET /api/fgi` returns `503` when no snapshot exists at all, and sets `is_stale` to `true` when it is serving an outdated snapshot because a refresh attempt failed. `GET /api/zones` returns `404` until a successful ingestion has produced data.
 
 ## Index Methodology
 
-The index is calculated for dates with both market and Trends data available:
+The index is computed weekly. Daily IHSG closes are resampled to week-ending Sunday (`W-SUN`) and joined with weekly Google Trends data over an 18-month lookback. Only weeks with both market and Trends data contribute.
 
-1. **Price momentum** — IHSG closing price is compared with its 125-trading-day moving average (MA-125).
-2. **Public interest** — Google Trends values for `ihsg` are normalized to a 0–100 scale over the ingestion window.
-3. **Score** — A close above MA-125 places the score in the 50–100 range; a close at or below MA-125 places it in the 0–50 range. Higher normalized search interest increases the distance from 50.
+1. **Price momentum** — the weekly IHSG close is compared with its 125-trading-day moving average (MA-125), expressed as a percentage distance.
+2. **Public interest** — three Google Trends keywords are fetched independently and averaged, each keeping its own scale.
+3. **Score** — the two components are combined with fixed weights.
 
-Formally, for normalized Google Trends value `T` in `[0, 100]`:
+Formally, where `close` is the weekly close and `trends_mean` is the mean of the three keyword series:
 
 ```text
-score = 50 + 0.5 × T  when close > MA-125
-score = 50 - 0.5 × T  when close ≤ MA-125
+distance_pct = ((close - MA-125) / MA-125) × 100
+
+price_score  = clip(50 + (distance_pct / 6.0) × 50, 0, 100)
+search_score = clip(50 + (trends_mean - 50) × sign(distance_pct), 0, 100)
+
+fgi = 0.60 × price_score + 0.40 × search_score
 ```
 
-The result is constrained to 0–100 and mapped to Fear & Greed zones. The first 124 trading observations cannot produce an MA-125 and are excluded from calculated output.
+Search interest therefore amplifies the prevailing price direction rather than acting independently: when price is above its moving average, high search interest pushes the score toward greed; when price is below, the same high interest pushes it toward fear.
+
+The result is constrained to 0–100 and classified into zones:
+
+| FGI range | Zone |
+| --- | --- |
+| `fgi ≤ 25` | Extreme Fear |
+| `25 < fgi ≤ 45` | Fear |
+| `45 < fgi ≤ 55` | Neutral |
+| `55 < fgi ≤ 75` | Greed |
+| `fgi > 75` | Extreme Greed |
+
+The bounds are inclusive upper limits, so a fractional score such as `25.5` classifies as Fear.
+
+The first 124 trading observations cannot produce an MA-125 and are excluded from calculated output.
+
+Zone periods are derived from the stored snapshot labels by collapsing consecutive weeks that share a zone into a single episode. Because the source is weekly, episode boundaries fall on week-ending dates and `duration_days` lands on multiples of seven.
 
 ## Data Sources
 
 - **IHSG prices:** [Sectors.app](https://sectors.app/)
-- **Public-interest signal:** Google Trends, keyword `ihsg`, locale `id-ID`
-- **Persistence:** Supabase PostgreSQL
+- **Public-interest signal:** Google Trends, locale `id-ID`, geo `ID`, keywords `ihsg`, `idx composite`, and `indeks harga saham gabungan`
+- **Persistence:** Supabase PostgreSQL — `fgi_snapshots` for index values, `zone_periods` for the zone log, `ingestion_runs` for run records
 
-External providers may apply availability, rate-limit, or data-revision constraints. A later ingestion can recalculate historical normalized Trends values and associated scores within its lookback window.
+External providers may apply availability, rate-limit, or data-revision constraints. A later ingestion can recalculate historical Trends values and associated scores within its lookback window.
 
 ## Operational Notes
 
@@ -166,7 +186,7 @@ External providers may apply availability, rate-limit, or data-revision constrai
 
 ```text
 app/
-├── api/routes/        # Health, ingestion, sentiment, and zone endpoints
+├── api/routes/        # Health, ingestion, FGI, and zone endpoints
 ├── db/                # Supabase client
 ├── schemas/           # Request and response models
 ├── services/          # Data clients, scoring, ingestion, and zone logic
