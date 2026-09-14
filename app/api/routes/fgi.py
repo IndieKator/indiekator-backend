@@ -19,11 +19,14 @@ def _parse_updated_at(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+_SNAPSHOT_COLUMNS = "week_date, fgi, sentiment, close_price, ma_125, distance_pct, search_score, updated_at"
+
+
 def _fetch_latest_snapshot() -> dict[str, Any] | None:
     result = (
         get_supabase()
         .table("fgi_snapshots")
-        .select("week_date, fgi, sentiment, updated_at")
+        .select(_SNAPSHOT_COLUMNS)
         .order("week_date", desc=True)
         .limit(1)
         .execute()
@@ -52,13 +55,20 @@ def _build_response(is_stale: bool) -> FgiResponse:
     result = (
         get_supabase()
         .table("fgi_snapshots")
-        .select("week_date, fgi")
+        .select(_SNAPSHOT_COLUMNS)
         .gte("week_date", start_date)
         .order("week_date", desc=False)
         .execute()
     )
     history = [
-        FgiHistoryPoint(date=date.fromisoformat(row["week_date"]), value=float(row["fgi"]))
+        FgiHistoryPoint(
+            date=date.fromisoformat(row["week_date"]),
+            value=float(row["fgi"]),
+            close_price=float(row["close_price"]),
+            ma_125=float(row["ma_125"]),
+            distance_pct=float(row["distance_pct"]),
+            search_score=float(row["search_score"]),
+        )
         for row in (result.data or [])
     ]
     return FgiResponse(
@@ -66,6 +76,10 @@ def _build_response(is_stale: bool) -> FgiResponse:
             date=date.fromisoformat(latest["week_date"]),
             value=float(latest["fgi"]),
             sentiment=latest["sentiment"],
+            close_price=float(latest["close_price"]),
+            ma_125=float(latest["ma_125"]),
+            distance_pct=float(latest["distance_pct"]),
+            search_score=float(latest["search_score"]),
         ),
         history=history,
         updated_at=_parse_updated_at(latest["updated_at"]),

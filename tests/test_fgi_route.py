@@ -54,8 +54,26 @@ class FakeSupabase:
 def test_get_fgi_returns_current_and_ordered_six_month_history(monkeypatch) -> None:
     now = datetime.now(timezone.utc).isoformat()
     rows = [
-        {"week_date": "2026-08-30", "fgi": 61.2, "sentiment": "Greed", "updated_at": now},
-        {"week_date": "2026-09-06", "fgi": 68.4, "sentiment": "Greed", "updated_at": now},
+        {
+            "week_date": "2026-08-30",
+            "fgi": 61.2,
+            "sentiment": "Greed",
+            "close_price": 7200.0,
+            "ma_125": 7000.0,
+            "distance_pct": 2.86,
+            "search_score": 60.0,
+            "updated_at": now,
+        },
+        {
+            "week_date": "2026-09-06",
+            "fgi": 68.4,
+            "sentiment": "Greed",
+            "close_price": 7300.0,
+            "ma_125": 7050.0,
+            "distance_pct": 3.55,
+            "search_score": 65.0,
+            "updated_at": now,
+        },
     ]
     monkeypatch.setattr(fgi, "get_supabase", lambda: FakeSupabase(rows))
     monkeypatch.setattr(fgi, "run_fgi_ingestion", lambda: (_ for _ in ()).throw(AssertionError()))
@@ -67,6 +85,10 @@ def test_get_fgi_returns_current_and_ordered_six_month_history(monkeypatch) -> N
         "date": "2026-09-06",
         "value": 68.4,
         "sentiment": "Greed",
+        "close_price": 7300.0,
+        "ma_125": 7050.0,
+        "distance_pct": 3.55,
+        "search_score": 65.0,
     }
     assert [point["date"] for point in response.json()["history"]] == [
         "2026-08-30",
@@ -78,7 +100,16 @@ def test_get_fgi_returns_current_and_ordered_six_month_history(monkeypatch) -> N
 def test_get_fgi_returns_stale_snapshot_when_refresh_fails(monkeypatch) -> None:
     stale = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
     rows = [
-        {"week_date": "2026-09-06", "fgi": 41.0, "sentiment": "Fear", "updated_at": stale},
+        {
+            "week_date": "2026-09-06",
+            "fgi": 41.0,
+            "sentiment": "Fear",
+            "close_price": 6900.0,
+            "ma_125": 7100.0,
+            "distance_pct": -2.82,
+            "search_score": 38.0,
+            "updated_at": stale,
+        },
     ]
     monkeypatch.setattr(fgi, "get_supabase", lambda: FakeSupabase(rows))
     monkeypatch.setattr(fgi, "run_fgi_ingestion", lambda: (_ for _ in ()).throw(RuntimeError()))

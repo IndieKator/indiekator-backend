@@ -7,11 +7,19 @@ class FgiCurrentResponse(BaseModel):
     date: date
     value: float
     sentiment: str
+    close_price: float
+    ma_125: float
+    distance_pct: float
+    search_score: float
 
 
 class FgiHistoryPoint(BaseModel):
     date: date
     value: float
+    close_price: float
+    ma_125: float
+    distance_pct: float
+    search_score: float
 
 
 class FgiResponse(BaseModel):
