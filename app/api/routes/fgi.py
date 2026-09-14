@@ -26,7 +26,6 @@ from app.services.fgi_presentation import (
 router = APIRouter(prefix="/fgi", tags=["fgi"])
 
 STALE_AFTER = timedelta(hours=24)
-HISTORY_DAYS = 183
 _refresh_lock = Lock()
 
 RANGE_DAYS: dict[str, int | None] = {
@@ -121,7 +120,6 @@ def _to_history_point(row: dict[str, Any]) -> FgiHistoryPoint:
 
 
 def _build_response(latest: dict[str, Any], is_stale: bool) -> FgiResponse:
-    start_date = (date.today() - timedelta(days=HISTORY_DAYS)).isoformat()
     return FgiResponse(
         current=FgiCurrentResponse(
             date=date.fromisoformat(latest["week_date"]),
@@ -132,7 +130,7 @@ def _build_response(latest: dict[str, Any], is_stale: bool) -> FgiResponse:
             distance_pct=float(latest["distance_pct"]),
             search_score=float(latest["search_score"]),
         ),
-        history=[_to_history_point(row) for row in _fetch_snapshots_since(start_date)],
+        history=[_to_history_point(row) for row in _fetch_snapshots_since(None)],
         updated_at=_parse_updated_at(latest["updated_at"]),
         is_stale=is_stale,
     )
@@ -140,7 +138,13 @@ def _build_response(latest: dict[str, Any], is_stale: bool) -> FgiResponse:
 
 @router.get("", response_model=FgiResponse)
 def get_fgi() -> FgiResponse:
-    """Latest snapshot plus roughly six months of weekly history."""
+    """Latest snapshot plus the full weekly history.
+
+    Returns every snapshot rather than a fixed trailing window. A window here
+    would cap what the client can show no matter what range it asks for, which
+    is what previously pinned the chart's earliest point to roughly six months
+    back. Callers wanting a narrower slice use ``/api/fgi/history``.
+    """
     latest, is_stale = _resolve_snapshot()
     return _build_response(latest, is_stale)
 

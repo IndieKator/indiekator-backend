@@ -235,6 +235,30 @@ def test_breakdown_reports_the_raw_component_values(monkeypatch) -> None:
     assert values["public_sentiment"] == 60.0
 
 
+def test_root_fgi_endpoint_returns_history_older_than_six_months(monkeypatch) -> None:
+    """Regression: a fixed trailing window used to truncate the chart.
+
+    The root endpoint previously filtered to roughly the last 183 days, which
+    capped the dashboard's earliest plotted point regardless of the range the
+    user selected.
+    """
+    oldest = _snapshot(50, 40.0)
+    rows = [oldest, _snapshot(0, 70.0)]
+
+    body = _client(monkeypatch, rows).get("/api/fgi").json()
+
+    assert len(body["history"]) == 2
+    assert body["history"][0]["date"] == oldest["week_date"]
+
+
+def test_root_fgi_endpoint_returns_every_snapshot(monkeypatch) -> None:
+    rows = [_snapshot(weeks, 50.0) for weeks in (200, 120, 60, 10, 0)]
+
+    body = _client(monkeypatch, rows).get("/api/fgi").json()
+
+    assert len(body["history"]) == len(rows)
+
+
 def test_root_fgi_endpoint_still_serves_its_original_contract(monkeypatch) -> None:
     body = _client(monkeypatch, FIVE_WEEKS).get("/api/fgi").json()
 
