@@ -4,7 +4,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from app.db.supabase import get_supabase
-from app.schemas.sentiment import ZonePeriodResponse
+from app.schemas.core import ZonePeriodResponse
 from app.services.zones import ZONE_LABELS_ID
 
 router = APIRouter(prefix="/zones", tags=["zones"])
