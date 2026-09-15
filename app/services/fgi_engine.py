@@ -8,6 +8,12 @@ from app.services.sectors_client import fetch_ihsg_prices
 
 FGI_LOOKBACK_MONTHS = 18
 
+# Component weights. Exposed as constants so the API breakdown reports the same
+# weights the engine actually applies, rather than a second hardcoded copy that
+# can drift.
+PRICE_WEIGHT = 0.60
+SEARCH_WEIGHT = 0.40
+
 
 def classify_fgi(value: float) -> str:
     if value <= 25:
@@ -46,7 +52,9 @@ def compute_fgi(as_of: date | None = None) -> pd.DataFrame:
     weekly["price_score"] = (50 + (weekly["distance_pct"] / 6.0) * 50).clip(0, 100)
     market_direction = np.sign(weekly["distance_pct"])
     weekly["search_score"] = (50 + (weekly["trends_mean"] - 50) * market_direction).clip(0, 100)
-    weekly["fgi"] = (0.60 * weekly["price_score"] + 0.40 * weekly["search_score"]).round(2)
+    weekly["fgi"] = (
+        PRICE_WEIGHT * weekly["price_score"] + SEARCH_WEIGHT * weekly["search_score"]
+    ).round(2)
     weekly["sentiment"] = weekly["fgi"].map(classify_fgi)
 
     return weekly.rename(columns={"Close": "close_price"})

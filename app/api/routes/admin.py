@@ -4,7 +4,7 @@ from fastapi import APIRouter, Header, HTTPException
 
 from app.config import get_settings
 from app.db.supabase import get_supabase
-from app.schemas.sentiment import HealthResponse, IngestResponse
+from app.schemas.core import HealthResponse, IngestResponse
 from app.services.ingestion import run_ingestion
 
 router = APIRouter(tags=["admin"])
