@@ -76,7 +76,7 @@ def test_get_fgi_returns_current_and_ordered_six_month_history(monkeypatch) -> N
         },
     ]
     monkeypatch.setattr(fgi, "get_supabase", lambda: FakeSupabase(rows))
-    monkeypatch.setattr(fgi, "run_fgi_ingestion", lambda: (_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setattr(fgi, "run_ingestion", lambda: (_ for _ in ()).throw(AssertionError()))
 
     response = TestClient(app).get("/api/fgi")
 
@@ -112,7 +112,7 @@ def test_get_fgi_returns_stale_snapshot_when_refresh_fails(monkeypatch) -> None:
         },
     ]
     monkeypatch.setattr(fgi, "get_supabase", lambda: FakeSupabase(rows))
-    monkeypatch.setattr(fgi, "run_fgi_ingestion", lambda: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(fgi, "run_ingestion", lambda: (_ for _ in ()).throw(RuntimeError()))
 
     response = TestClient(app).get("/api/fgi")
 
@@ -120,9 +120,41 @@ def test_get_fgi_returns_stale_snapshot_when_refresh_fails(monkeypatch) -> None:
     assert response.json()["is_stale"] is True
 
 
+def test_get_fgi_refreshes_through_the_consolidated_ingestion(monkeypatch) -> None:
+    stale = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+    rows = [
+        {
+            "week_date": "2026-09-06",
+            "fgi": 41.0,
+            "sentiment": "Fear",
+            "close_price": 6900.0,
+            "ma_125": 7100.0,
+            "distance_pct": -2.82,
+            "search_score": 38.0,
+            "updated_at": stale,
+        },
+    ]
+    refresh_calls = 0
+
+    def refresh() -> dict:
+        nonlocal refresh_calls
+        refresh_calls += 1
+        rows[0]["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return {"status": "success", "rows_upserted": 1, "message": "refreshed"}
+
+    monkeypatch.setattr(fgi, "get_supabase", lambda: FakeSupabase(rows))
+    monkeypatch.setattr(fgi, "run_ingestion", refresh)
+
+    response = TestClient(app).get("/api/fgi")
+
+    assert response.status_code == 200
+    assert response.json()["is_stale"] is False
+    assert refresh_calls == 1
+
+
 def test_get_fgi_returns_503_when_refresh_fails_without_snapshot(monkeypatch) -> None:
     monkeypatch.setattr(fgi, "get_supabase", lambda: FakeSupabase([]))
-    monkeypatch.setattr(fgi, "run_fgi_ingestion", lambda: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(fgi, "run_ingestion", lambda: (_ for _ in ()).throw(RuntimeError()))
 
     response = TestClient(app).get("/api/fgi")
 

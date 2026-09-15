@@ -95,7 +95,7 @@ def _client(monkeypatch, rows: list[dict]) -> TestClient:
     monkeypatch.setattr(fgi, "get_supabase", lambda: FakeSupabase(rows))
     monkeypatch.setattr(
         fgi,
-        "run_fgi_ingestion",
+        "run_ingestion",
         lambda: pytest.fail("fresh snapshots must not trigger a refresh"),
     )
     return TestClient(app)
@@ -160,7 +160,7 @@ def test_current_rejects_an_unrecognised_sentiment_label(monkeypatch) -> None:
 def test_current_returns_503_without_any_snapshot(monkeypatch) -> None:
     monkeypatch.setattr(fgi, "get_supabase", lambda: FakeSupabase([]))
     monkeypatch.setattr(
-        fgi, "run_fgi_ingestion", lambda: (_ for _ in ()).throw(RuntimeError())
+        fgi, "run_ingestion", lambda: (_ for _ in ()).throw(RuntimeError())
     )
 
     assert TestClient(app).get("/api/fgi/current").status_code == 503

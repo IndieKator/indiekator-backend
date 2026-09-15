@@ -16,7 +16,7 @@ from app.schemas.fgi import (
     FgiResponse,
     RangeKey,
 )
-from app.services.fgi_ingestion import run_fgi_ingestion
+from app.services.ingestion import run_ingestion
 from app.services.fgi_presentation import (
     build_components,
     build_summary,
@@ -81,7 +81,7 @@ def _is_stale(snapshot: dict[str, Any] | None) -> bool:
 def _refresh_if_stale() -> None:
     with _refresh_lock:
         if _is_stale(_fetch_latest_snapshot()):
-            run_fgi_ingestion()
+            run_ingestion()
 
 
 def _resolve_snapshot() -> tuple[dict[str, Any], bool]:
