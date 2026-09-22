@@ -39,9 +39,13 @@ RANGE_DAYS: dict[str, int | None] = {
 _WEEKS_PER_MONTH = 4
 
 _SNAPSHOT_COLUMNS = (
-    "week_date, fgi, sentiment, close_price, ma_125, distance_pct, "
+    "week_date, fgi, sentiment, close_price, ma_125, ema_13, distance_pct, "
     "price_score, search_score, trends_mean, updated_at"
 )
+
+
+def _optional_float(value: Any) -> float | None:
+    return None if value is None else float(value)
 
 
 def _parse_updated_at(value: str) -> datetime:
@@ -114,6 +118,7 @@ def _to_history_point(row: dict[str, Any]) -> FgiHistoryPoint:
         value=float(row["fgi"]),
         close_price=float(row["close_price"]),
         ma_125=float(row["ma_125"]),
+        ema_13=_optional_float(row.get("ema_13")),
         distance_pct=float(row["distance_pct"]),
         search_score=float(row["search_score"]),
     )
@@ -127,6 +132,7 @@ def _build_response(latest: dict[str, Any], is_stale: bool) -> FgiResponse:
             sentiment=latest["sentiment"],
             close_price=float(latest["close_price"]),
             ma_125=float(latest["ma_125"]),
+            ema_13=_optional_float(latest.get("ema_13")),
             distance_pct=float(latest["distance_pct"]),
             search_score=float(latest["search_score"]),
         ),
@@ -175,6 +181,7 @@ def get_current_fgi() -> FgiCurrentDetailResponse:
         summary=build_summary(zone_label, distance_pct, search_score),
         close_price=float(latest["close_price"]),
         ma_125=float(latest["ma_125"]),
+        ema_13=_optional_float(latest.get("ema_13")),
         distance_pct=distance_pct,
         price_score=float(latest["price_score"]),
         search_score=search_score,

@@ -87,6 +87,7 @@ def test_get_fgi_returns_current_and_ordered_six_month_history(monkeypatch) -> N
         "sentiment": "Greed",
         "close_price": 7300.0,
         "ma_125": 7050.0,
+        "ema_13": None,
         "distance_pct": 3.55,
         "search_score": 65.0,
     }
