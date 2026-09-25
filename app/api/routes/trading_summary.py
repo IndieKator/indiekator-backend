@@ -1,81 +1,63 @@
-from datetime import date, timedelta
-from typing import Any
-
+from datetime import date
 from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas.trading_summary import (
-    TradingRangeKey,
-    TradingSummaryCurrentResponse,
-    TradingSummaryHistoryResponse,
+    TradingDayCurrent,
     TradingSummaryResponse,
 )
 from app.services.trading_summary import (
-    TRADING_RANGE_DAYS,
-    build_current_summary_response,
-    fetch_latest_trading_summary,
-    fetch_recent_trading_records,
-    fetch_trading_summary_history,
-    to_trading_point,
+    build_current_summary,
+    fetch_latest_two_records,
+    fetch_trading_history_paginated,
 )
 
 router = APIRouter(prefix="/trading-summary", tags=["trading-summary"])
 
 
 @router.get("", response_model=TradingSummaryResponse)
-def get_trading_summary() -> TradingSummaryResponse:
-    """Latest trading summary snapshot plus historical points."""
-    latest = fetch_latest_trading_summary()
-    if latest is None:
+def get_trading_summary(
+    limit: int = Query(
+        default=30, ge=5, le=100, description="Number of bars to return"
+    ),
+    before: date | None = Query(
+        default=None, description="Cursor date to fetch older bars (date < before)"
+    ),
+) -> TradingSummaryResponse:
+    """Trading summary snapshot plus paginated historical bars for chart viewing."""
+    recent_two = fetch_latest_two_records()
+    if not recent_two:
         raise HTTPException(
             status_code=404,
             detail="No trading summary data available. Run ingestion or import first.",
         )
 
-    recent_rows = fetch_recent_trading_records(30)
-    current = build_current_summary_response(latest, recent_rows)
-    history_rows = fetch_trading_summary_history()
-    points = [to_trading_point(row) for row in history_rows]
+    today = recent_two[0]
+    yesterday = recent_two[1] if len(recent_two) > 1 else None
+    current = build_current_summary(today, yesterday)
+
+    before_str = before.isoformat() if before else None
+    history, pagination = fetch_trading_history_paginated(
+        limit=limit, before_date=before_str
+    )
 
     return TradingSummaryResponse(
         current=current,
-        history=points,
+        history=history,
+        pagination=pagination,
         updated_at=current.updated_at,
     )
 
 
-@router.get("/current", response_model=TradingSummaryCurrentResponse)
-def get_current_trading_summary() -> TradingSummaryCurrentResponse:
-    """Latest day's trading volume, frequency, and turnover with 20D averages and deltas."""
-    latest = fetch_latest_trading_summary()
-    if latest is None:
+@router.get("/current", response_model=TradingDayCurrent)
+def get_current_trading_summary() -> TradingDayCurrent:
+    """Latest day's trading snapshot with Day-over-Day delta and average trade size."""
+    recent_two = fetch_latest_two_records()
+    if not recent_two:
         raise HTTPException(
             status_code=404,
             detail="No trading summary data available. Run ingestion or import first.",
         )
 
-    recent_rows = fetch_recent_trading_records(30)
-    return build_current_summary_response(latest, recent_rows)
-
-
-@router.get("/history", response_model=TradingSummaryHistoryResponse)
-def get_trading_summary_history(
-    range: TradingRangeKey = Query(default="30d", alias="range"),
-    days: int | None = Query(
-        default=None, ge=1, le=1825, description="Custom number of days"
-    ),
-) -> TradingSummaryHistoryResponse:
-    """Historical trading summary points (volume, frequency, turnover)."""
-    filter_days = days if days is not None else TRADING_RANGE_DAYS[range]
-    start_date = None
-    if filter_days is not None:
-        start_date = (date.today() - timedelta(days=filter_days)).isoformat()
-
-    rows = fetch_trading_summary_history(start_date)
-    points = [to_trading_point(row) for row in rows]
-
-    range_label = f"{days}d" if days is not None else range
-    return TradingSummaryHistoryResponse(
-        range=range_label,
-        count=len(points),
-        data=points,
-    )
+    today = recent_two[0]
+    yesterday = recent_two[1] if len(recent_two) > 1 else None
+    return build_current_summary(today, yesterday)

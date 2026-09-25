@@ -5,73 +5,34 @@ from fastapi.testclient import TestClient
 
 from app.api.routes import trading_summary
 from app.main import app
-
-
-class FakeTradingQuery:
-    def __init__(self, rows: list[dict]):
-        self.rows = rows
-        self.order_column: str | None = None
-        self.reverse = False
-        self.row_limit: int | None = None
-        self.start_date: str | None = None
-
-    def select(self, *_: str) -> "FakeTradingQuery":
-        return self
-
-    def order(self, column: str, desc: bool = False) -> "FakeTradingQuery":
-        self.order_column = column
-        self.reverse = desc
-        return self
-
-    def limit(self, value: int) -> "FakeTradingQuery":
-        self.row_limit = value
-        return self
-
-    def gte(self, _column: str, value: str) -> "FakeTradingQuery":
-        self.start_date = value
-        return self
-
-    def execute(self) -> SimpleNamespace:
-        rows = list(self.rows)
-        if self.start_date:
-            rows = [row for row in rows if str(row["date"]) >= self.start_date]
-        if self.order_column:
-            rows.sort(key=lambda row: str(row[self.order_column]), reverse=self.reverse)
-        if self.row_limit is not None:
-            rows = rows[: self.row_limit]
-        return SimpleNamespace(data=rows)
-
-
-class FakeSupabaseForTrading:
-    def __init__(self, rows: list[dict]):
-        self.rows = rows
-
-    def table(self, name: str) -> FakeTradingQuery:
-        assert name == "daily_trading_summary"
-        return FakeTradingQuery(self.rows)
+from app.services.trading_summary import (
+    compute_daily_change,
+    fetch_trading_history_paginated,
+)
 
 
 def _sample_trading_rows() -> list[dict]:
     now = datetime.now(timezone.utc).isoformat()
     return [
         {
-            "date": "2026-08-27",
-            "volume": 8_500_000_000,
-            "value_idr": 11_200_000_000_000.0,
-            "frequency": 1_150_000,
-            "volume_ma_20": 8_000_000_000.0,
-            "frequency_ma_20": 1_100_000.0,
-            "value_ma_20": 10_500_000_000_000.0,
-            "updated_at": now,
-        },
-        {
             "date": "2026-08-28",
             "volume": 9_820_000_000,
             "value_idr": 12_400_000_000_000.0,
             "frequency": 1_280_000,
-            "volume_ma_20": 8_710_000_000.0,
-            "frequency_ma_20": 1_150_000.0,
-            "value_ma_20": 11_200_000_000_000.0,
+            "updated_at": now,
+        },
+        {
+            "date": "2026-08-27",
+            "volume": 8_500_000_000,
+            "value_idr": 11_200_000_000_000.0,
+            "frequency": 1_150_000,
+            "updated_at": now,
+        },
+        {
+            "date": "2026-08-26",
+            "volume": 7_200_000_000,
+            "value_idr": 10_100_000_000_000.0,
+            "frequency": 1_000_000,
             "updated_at": now,
         },
     ]
@@ -79,12 +40,7 @@ def _sample_trading_rows() -> list[dict]:
 
 def test_get_current_trading_summary(monkeypatch) -> None:
     rows = _sample_trading_rows()
-    monkeypatch.setattr(
-        trading_summary, "fetch_latest_trading_summary", lambda: rows[1]
-    )
-    monkeypatch.setattr(
-        trading_summary, "fetch_recent_trading_records", lambda limit: rows[::-1]
-    )
+    monkeypatch.setattr(trading_summary, "fetch_latest_two_records", lambda: rows[:2])
 
     response = TestClient(app).get("/api/trading-summary/current")
 
@@ -94,14 +50,31 @@ def test_get_current_trading_summary(monkeypatch) -> None:
     assert data["volume"] == 9_820_000_000
     assert data["value_idr"] == 12_400_000_000_000.0
     assert data["frequency"] == 1_280_000
-    assert data["volume_ma_20"] == 8_710_000_000.0
-    assert data["volume_vs_ma_20_pct"] == 12.74
-    assert data["frequency_ma_20"] == 1_150_000.0
-    assert data["frequency_vs_ma_20_pct"] == 11.30
+    # 12.4T / 1.28M trades = 9,687,500.0
+    assert data["avg_trade_size"] == 9687500.0
+    # Day-over-Day change
+    assert data["change"]["volume_pct"] == 15.53
+    assert data["change"]["value_pct"] == 10.71
+    assert data["change"]["frequency_pct"] == 11.30
+
+
+def test_get_current_trading_summary_single_day(monkeypatch) -> None:
+    rows = _sample_trading_rows()
+    # Only 1 day exists
+    monkeypatch.setattr(trading_summary, "fetch_latest_two_records", lambda: [rows[0]])
+
+    response = TestClient(app).get("/api/trading-summary/current")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["date"] == "2026-08-28"
+    assert data["change"]["volume_pct"] is None
+    assert data["change"]["value_pct"] is None
+    assert data["change"]["frequency_pct"] is None
 
 
 def test_get_current_trading_summary_404_when_empty(monkeypatch) -> None:
-    monkeypatch.setattr(trading_summary, "fetch_latest_trading_summary", lambda: None)
+    monkeypatch.setattr(trading_summary, "fetch_latest_two_records", lambda: [])
 
     response = TestClient(app).get("/api/trading-summary/current")
 
@@ -109,69 +82,129 @@ def test_get_current_trading_summary_404_when_empty(monkeypatch) -> None:
     assert "No trading summary data available" in response.json()["detail"]
 
 
-def test_get_trading_summary_history(monkeypatch) -> None:
+def test_get_trading_summary_paginated(monkeypatch) -> None:
     rows = _sample_trading_rows()
-    monkeypatch.setattr(
-        trading_summary, "fetch_trading_summary_history", lambda start_date: rows
+    monkeypatch.setattr(trading_summary, "fetch_latest_two_records", lambda: rows[:2])
+
+    from app.schemas.trading_summary import TradingDayPoint, TradingPaginationInfo
+
+    mock_history = [
+        TradingDayPoint(
+            date=r["date"],
+            volume=r["volume"],
+            value_idr=r["value_idr"],
+            frequency=r["frequency"],
+        )
+        for r in reversed(rows)
+    ]
+    mock_pagination = TradingPaginationInfo(
+        limit=30,
+        has_more=False,
+        oldest_date=mock_history[0].date,
+        newest_date=mock_history[-1].date,
     )
 
-    response = TestClient(app).get("/api/trading-summary/history?range=30d")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["range"] == "30d"
-    assert data["count"] == 2
-    assert len(data["data"]) == 2
-    assert data["data"][0]["date"] == "2026-08-27"
-    assert data["data"][1]["date"] == "2026-08-28"
-
-
-def test_get_trading_summary_history_with_custom_days(monkeypatch) -> None:
-    rows = _sample_trading_rows()
     monkeypatch.setattr(
-        trading_summary, "fetch_trading_summary_history", lambda start_date: rows
+        trading_summary,
+        "fetch_trading_history_paginated",
+        lambda limit, before_date: (mock_history, mock_pagination),
     )
 
-    response = TestClient(app).get("/api/trading-summary/history?days=14")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["range"] == "14d"
-    assert data["count"] == 2
-
-
-def test_get_trading_summary_composite(monkeypatch) -> None:
-    rows = _sample_trading_rows()
-    monkeypatch.setattr(
-        trading_summary, "fetch_latest_trading_summary", lambda: rows[1]
-    )
-    monkeypatch.setattr(
-        trading_summary, "fetch_recent_trading_records", lambda limit: rows[::-1]
-    )
-    monkeypatch.setattr(
-        trading_summary, "fetch_trading_summary_history", lambda start_date=None: rows
-    )
-
-    response = TestClient(app).get("/api/trading-summary")
+    response = TestClient(app).get("/api/trading-summary?limit=30")
 
     assert response.status_code == 200
     data = response.json()
     assert data["current"]["date"] == "2026-08-28"
-    assert data["current"]["volume"] == 9_820_000_000
-    assert len(data["history"]) == 2
+    assert data["current"]["change"]["volume_pct"] == 15.53
+    assert len(data["history"]) == 3
+    # Chronological ascending
+    assert data["history"][0]["date"] == "2026-08-26"
+    assert data["history"][-1]["date"] == "2026-08-28"
+    assert data["pagination"]["limit"] == 30
+    assert data["pagination"]["has_more"] is False
+    assert data["pagination"]["oldest_date"] == "2026-08-26"
+    assert data["pagination"]["newest_date"] == "2026-08-28"
 
 
-def test_compute_20d_metrics_dynamic() -> None:
-    from app.services.trading_summary import compute_20d_metrics
+def test_compute_daily_change_calculation() -> None:
+    today = {"volume": 110, "value_idr": 2200.0, "frequency": 22}
+    yesterday = {"volume": 100, "value_idr": 2000.0, "frequency": 20}
 
-    # Test dynamic computation when MA is not pre-calculated
-    rows = [{"volume": 100, "frequency": 10, "value_idr": 1000} for _ in range(20)]
-    latest = {"volume": 120, "frequency": 15, "value_idr": 1100}
-    metrics = compute_20d_metrics(latest, rows)
+    change = compute_daily_change(today, yesterday)
+    assert change.volume_pct == 10.0
+    assert change.value_pct == 10.0
+    assert change.frequency_pct == 10.0
 
-    assert metrics["volume_ma_20"] == 100.0
-    assert metrics["volume_vs_ma_20_pct"] == 20.0
-    assert metrics["frequency_ma_20"] == 10.0
-    assert metrics["frequency_vs_ma_20_pct"] == 50.0
-    assert metrics["value_ma_20"] == 1000.0
-    assert metrics["value_vs_ma_20_pct"] == 10.0
+    no_prev_change = compute_daily_change(today, None)
+    assert no_prev_change.volume_pct is None
+
+
+def test_fetch_trading_history_paginated_logic(monkeypatch) -> None:
+    from app.services import trading_summary as ts_service
+
+    rows = [
+        {
+            "date": f"2026-08-{i:02d}",
+            "volume": 1000,
+            "value_idr": 5000.0,
+            "frequency": 50,
+        }
+        for i in range(25, 0, -1)
+    ]  # 25 rows descending (25 down to 01)
+
+    class MockQuery:
+        def __init__(self, data):
+            self.data = data
+            self.cursor = None
+
+        def select(self, *args):
+            return self
+
+        def lt(self, col, val):
+            self.cursor = val
+            return self
+
+        def order(self, col, desc=True):
+            return self
+
+        def limit(self, count):
+            self.count = count
+            return self
+
+        def execute(self):
+            filtered = [
+                r for r in self.data if not self.cursor or r["date"] < self.cursor
+            ]
+            return SimpleNamespace(data=filtered[: self.count])
+
+    class MockSupabase:
+        def table(self, name):
+            assert name == "daily_trading_summary"
+            return MockQuery(rows)
+
+    monkeypatch.setattr(ts_service, "get_supabase", lambda: MockSupabase())
+
+    # Request limit=10: should get 10 items, has_more=True
+    points, pagination = ts_service.fetch_trading_history_paginated(limit=10)
+    assert len(points) == 10
+    assert pagination.has_more is True
+    assert pagination.oldest_date.isoformat() == "2026-08-16"
+    assert pagination.newest_date.isoformat() == "2026-08-25"
+
+    # Paginate backwards before 2026-08-16: should get 10 items (15 down to 06), has_more=True
+    points_prev, pag_prev = ts_service.fetch_trading_history_paginated(
+        limit=10, before_date="2026-08-16"
+    )
+    assert len(points_prev) == 10
+    assert pag_prev.has_more is True
+    assert points_prev[0].date.isoformat() == "2026-08-06"
+    assert points_prev[-1].date.isoformat() == "2026-08-15"
+
+    # Paginate backwards before 2026-08-06: remaining 5 items (05 down to 01), has_more=False
+    points_end, pag_end = ts_service.fetch_trading_history_paginated(
+        limit=10, before_date="2026-08-06"
+    )
+    assert len(points_end) == 5
+    assert pag_end.has_more is False
+    assert points_end[0].date.isoformat() == "2026-08-01"
+    assert points_end[-1].date.isoformat() == "2026-08-05"

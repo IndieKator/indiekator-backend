@@ -15,6 +15,7 @@ dependencies = [
     "httpx>=0.28.0",
     "apscheduler>=3.10.0",
     "python-dotenv>=1.0.0",
+    "curl-cffi>=0.16.3",
 ]
 
 [dependency-groups]
