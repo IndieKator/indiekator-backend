@@ -269,6 +269,7 @@ def test_root_fgi_endpoint_still_serves_its_original_contract(monkeypatch) -> No
         "sentiment",
         "close_price",
         "ma_125",
+        "ema_13",
         "distance_pct",
         "search_score",
     }
