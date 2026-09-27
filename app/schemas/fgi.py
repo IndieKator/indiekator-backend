@@ -14,6 +14,7 @@ class FgiCurrentResponse(BaseModel):
     sentiment: str
     close_price: float
     ma_125: float
+    ema_13: float | None
     distance_pct: float
     search_score: float
 
@@ -23,6 +24,7 @@ class FgiHistoryPoint(BaseModel):
     value: float
     close_price: float
     ma_125: float
+    ema_13: float | None
     distance_pct: float
     search_score: float
 
@@ -55,6 +57,7 @@ class FgiCurrentDetailResponse(BaseModel):
     summary: str
     close_price: float
     ma_125: float
+    ema_13: float | None
     distance_pct: float
     price_score: float
     search_score: float
