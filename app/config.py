@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     idx_cf_clearance: str = ""
 
+    # Ollama Cloud powers the AI market brief. The key authenticates direct
+    # requests to ollama.com; base URL and model can be overridden per-env.
+    ollama_api_key: str = ""
+    ollama_base_url: str = "https://ollama.com"
+    ollama_model: str = "gpt-oss:20b"
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
