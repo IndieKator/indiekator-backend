@@ -53,6 +53,68 @@ def build_prompt(facts: dict[str, object]) -> str:
     )
 
 
+_CHAT_SYSTEM_PROMPT = (
+    "You are IndieKator Assistant, a helpful analyst for the Indonesian stock "
+    "market dashboard IndieKator (IHSG / IDX Composite Fear & Greed Index). "
+    "Answer questions about IHSG, the dashboard's indicators (Fear & Greed "
+    "Index, EMA 13 bands, MA 30, Google Trends search interest, trading "
+    "volume), and general market concepts. When citing current figures, use "
+    "ONLY the market snapshot provided below; if a figure is not provided, say "
+    "you don't have it rather than guessing. Never give personalised "
+    "investment advice or buy/sell recommendations; add a brief reminder that "
+    "the content is informational when relevant. Reply in the user's language "
+    "(Indonesian or English). Keep answers concise. Format with Markdown: "
+    "**bold** for key figures, *italic* for emphasis, bullet or numbered "
+    "lists for multiple points, and small tables only when comparing a few "
+    "values. Do not use HTML."
+)
+
+
+class OllamaNotConfiguredError(RuntimeError):
+    """Raised when no Ollama API key is configured."""
+
+
+def _post_chat(messages: list[dict[str, str]], temperature: float) -> str:
+    settings = get_settings()
+    if not settings.ollama_api_key:
+        raise OllamaNotConfiguredError("OLLAMA_API_KEY is not configured")
+
+    url = f"{settings.ollama_base_url.rstrip('/')}/api/chat"
+    headers = {"Authorization": f"Bearer {settings.ollama_api_key}"}
+    payload = {
+        "model": settings.ollama_model,
+        "messages": messages,
+        "stream": False,
+        "options": {"temperature": temperature},
+    }
+
+    with httpx.Client(timeout=60.0) as client:
+        response = client.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+
+    return (data.get("message") or {}).get("content", "").strip()
+
+
+def generate_chat_reply(
+    messages: list[dict[str, str]], market_context: str
+) -> str:
+    """Return the assistant's reply to a user/assistant conversation.
+
+    ``messages`` holds only ``user``/``assistant`` turns from the client; the
+    system prompt and live market context are always set server-side so a
+    client cannot override them. Raises ``OllamaNotConfiguredError`` without a
+    key and ``RuntimeError`` on an empty reply.
+    """
+    system = f"{_CHAT_SYSTEM_PROMPT}\n\nCurrent market snapshot:\n{market_context}"
+    content = _post_chat(
+        [{"role": "system", "content": system}, *messages], temperature=0.4
+    )
+    if not content:
+        raise RuntimeError("Ollama returned an empty chat reply")
+    return content
+
+
 def generate_market_brief(facts: dict[str, object]) -> str:
     """Call Ollama Cloud and return the generated brief text.
 
