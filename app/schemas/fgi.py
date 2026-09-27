@@ -81,6 +81,21 @@ class FgiHistoryResponse(BaseModel):
     data: list[FgiHistoryPoint]
 
 
+class FgiBriefResponse(BaseModel):
+    """AI-generated plain-English weekly market brief.
+
+    ``source`` is ``"ollama"`` when the text came from the model and
+    ``"fallback"`` when the deterministic template was used (missing key or the
+    model call failed), so the client can tell them apart if needed.
+    """
+
+    date: date
+    brief: str
+    source: Literal["ollama", "fallback"]
+    updated_at: datetime
+    is_stale: bool
+
+
 class FgiComponent(BaseModel):
     """One weighted input to the index.
 
