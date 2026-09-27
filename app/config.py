@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: str
     admin_secret: str = "changeme"
     cors_origins: str = "http://localhost:5173"
+    idx_cf_clearance: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.api.routes import trading_summary
@@ -9,6 +10,12 @@ from app.services.trading_summary import (
     compute_daily_change,
     fetch_trading_history_paginated,
 )
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_sync(monkeypatch) -> None:
+    monkeypatch.setattr(trading_summary, "sync_trading_summary_on_demand", lambda: False)
+    monkeypatch.setattr(trading_summary, "fetch_sync_state", lambda _date: None)
 
 
 def _sample_trading_rows() -> list[dict]:
@@ -71,6 +78,23 @@ def test_get_current_trading_summary_single_day(monkeypatch) -> None:
     assert data["change"]["volume_pct"] is None
     assert data["change"]["value_pct"] is None
     assert data["change"]["frequency_pct"] is None
+
+
+def test_current_exposes_final_and_stale_status(monkeypatch) -> None:
+    rows = _sample_trading_rows()
+    monkeypatch.setattr(trading_summary, "fetch_latest_two_records", lambda: rows[:2])
+    monkeypatch.setattr(trading_summary, "sync_trading_summary_on_demand", lambda: True)
+    monkeypatch.setattr(
+        trading_summary,
+        "fetch_sync_state",
+        lambda _date: {"finalized_at": "2026-08-28T10:00:00Z"},
+    )
+
+    response = TestClient(app).get("/api/trading-summary/current")
+
+    assert response.status_code == 200
+    assert response.json()["is_final"] is True
+    assert response.json()["is_stale"] is True
 
 
 def test_get_current_trading_summary_404_when_empty(monkeypatch) -> None:
@@ -141,6 +165,7 @@ def test_compute_daily_change_calculation() -> None:
 
 def test_fetch_trading_history_paginated_logic(monkeypatch) -> None:
     from app.services import trading_summary as ts_service
+    from app.services import trading_summary_repository as ts_repository
 
     rows = [
         {
@@ -182,7 +207,7 @@ def test_fetch_trading_history_paginated_logic(monkeypatch) -> None:
             assert name == "daily_trading_summary"
             return MockQuery(rows)
 
-    monkeypatch.setattr(ts_service, "get_supabase", lambda: MockSupabase())
+    monkeypatch.setattr(ts_repository, "get_supabase", lambda: MockSupabase())
 
     # Request limit=10: should get 10 items, has_more=True
     points, pagination = ts_service.fetch_trading_history_paginated(limit=10)
