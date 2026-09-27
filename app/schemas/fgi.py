@@ -13,7 +13,7 @@ class FgiCurrentResponse(BaseModel):
     value: float
     sentiment: str
     close_price: float
-    ma_125: float
+    ma_30: float
     ema_13: float | None
     distance_pct: float
     search_score: float
@@ -27,7 +27,7 @@ class FgiHistoryPoint(BaseModel):
     date: date
     value: float
     close_price: float
-    ma_125: float
+    ma_30: float
     ema_13: float | None
     distance_pct: float
     search_score: float
@@ -64,7 +64,7 @@ class FgiCurrentDetailResponse(BaseModel):
     zone_label: str
     summary: str
     close_price: float
-    ma_125: float
+    ma_30: float
     ema_13: float | None
     distance_pct: float
     price_score: float

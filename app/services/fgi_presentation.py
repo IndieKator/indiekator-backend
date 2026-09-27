@@ -36,7 +36,7 @@ def build_summary(
     position = "di atas" if distance_pct >= 0 else "di bawah"
     interest = "tinggi" if search_score >= 50 else "rendah"
     return (
-        f"Pasar sedang {zone_label}, IHSG {position} MA 125 "
+        f"Pasar sedang {zone_label}, IHSG {position} MA 30 "
         f"({distance_pct:+.2f}%) dengan sentimen pencarian {interest}."
     )
 
@@ -62,7 +62,7 @@ def build_components(
             "weight": PRICE_WEIGHT,
             "contribution": round(price_score * PRICE_WEIGHT, 2),
             "description": (
-                f"IHSG {position} MA 125 sebesar {distance_pct:+.2f}% "
+                f"IHSG {position} MA 30 sebesar {distance_pct:+.2f}% "
                 f"— skor {price_score:.1f}/100"
             ),
         },

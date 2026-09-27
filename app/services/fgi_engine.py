@@ -14,6 +14,9 @@ FGI_LOOKBACK_MONTHS = 18
 PRICE_WEIGHT = 0.60
 SEARCH_WEIGHT = 0.40
 
+# Rolling window (in daily closes) for the moving average stored as ``ma_30``.
+MA_WINDOW = 30
+
 
 def classify_fgi(value: float) -> str:
     if value <= 25:
@@ -34,8 +37,8 @@ def compute_fgi(as_of: date | None = None) -> pd.DataFrame:
     lookback_days = (end_date - start_date).days + 1
 
     prices = fetch_ihsg_prices(lookback_days).copy()
-    prices["ma_125"] = prices["Close"].rolling(window=125).mean()
-    weekly_prices = prices[["Close", "ma_125"]].resample("W-SUN").last().dropna()
+    prices["ma_30"] = prices["Close"].rolling(window=MA_WINDOW).mean()
+    weekly_prices = prices[["Close", "ma_30"]].resample("W-SUN").last().dropna()
 
     trends = fetch_fgi_google_trends(start_date, end_date)
     weekly = weekly_prices.join(trends, how="inner").dropna()
@@ -48,7 +51,7 @@ def compute_fgi(as_of: date | None = None) -> pd.DataFrame:
         "trend_indeks_harga_saham_gabungan",
     ]
     weekly["trends_mean"] = weekly[trend_columns].mean(axis=1)
-    weekly["distance_pct"] = ((weekly["Close"] - weekly["ma_125"]) / weekly["ma_125"]) * 100
+    weekly["distance_pct"] = ((weekly["Close"] - weekly["ma_30"]) / weekly["ma_30"]) * 100
     weekly["price_score"] = (50 + (weekly["distance_pct"] / 6.0) * 50).clip(0, 100)
     market_direction = np.sign(weekly["distance_pct"])
     weekly["search_score"] = (50 + (weekly["trends_mean"] - 50) * market_direction).clip(0, 100)
@@ -67,7 +70,7 @@ def fgi_to_records(
     refreshed_at = updated_at or datetime.now(timezone.utc)
     record_columns = [
         "close_price",
-        "ma_125",
+        "ma_30",
         "distance_pct",
         "price_score",
         "search_score",

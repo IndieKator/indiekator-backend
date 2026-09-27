@@ -72,7 +72,7 @@ def _snapshot(
         "fgi": fgi_value,
         "sentiment": sentiment or classify_fgi(fgi_value),
         "close_price": 7300.0,
-        "ma_125": 7050.0,
+        "ma_30": 7050.0,
         "distance_pct": distance_pct,
         "price_score": price_score,
         "search_score": search_score,
@@ -112,6 +112,22 @@ def test_current_reports_zone_and_summary(monkeypatch) -> None:
     assert body["zone_label"] == "Greed"
     assert "Greed" in body["summary"]
     assert body["is_stale"] is False
+
+
+def test_current_reports_the_30_period_moving_average(monkeypatch) -> None:
+    body = _client(monkeypatch, FIVE_WEEKS).get("/api/fgi/current").json()
+
+    assert body["ma_30"] == 7050.0
+    assert "ma_125" not in body
+    assert "MA 30" in body["summary"]
+    assert "MA 125" not in body["summary"]
+
+
+def test_breakdown_describes_price_momentum_against_ma_30(monkeypatch) -> None:
+    body = _client(monkeypatch, FIVE_WEEKS).get("/api/fgi/breakdown").json()
+    price = next(c for c in body["components"] if c["name"] == "price_momentum")
+
+    assert "MA 30" in price["description"]
 
 
 def test_current_exposes_the_raw_component_scores(monkeypatch) -> None:
@@ -268,7 +284,7 @@ def test_root_fgi_endpoint_still_serves_its_original_contract(monkeypatch) -> No
         "value",
         "sentiment",
         "close_price",
-        "ma_125",
+        "ma_30",
         "ema_13",
         "distance_pct",
         "search_score",
