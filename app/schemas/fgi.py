@@ -17,6 +17,10 @@ class FgiCurrentResponse(BaseModel):
     ema_13: float | None
     distance_pct: float
     search_score: float
+    trends_mean: float | None = None
+    trend_ihsg: float | None = None
+    trend_idx_composite: float | None = None
+    trend_indeks_harga_saham_gabungan: float | None = None
 
 
 class FgiHistoryPoint(BaseModel):
@@ -27,6 +31,10 @@ class FgiHistoryPoint(BaseModel):
     ema_13: float | None
     distance_pct: float
     search_score: float
+    trends_mean: float | None = None
+    trend_ihsg: float | None = None
+    trend_idx_composite: float | None = None
+    trend_indeks_harga_saham_gabungan: float | None = None
 
 
 class FgiResponse(BaseModel):

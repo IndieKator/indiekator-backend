@@ -90,6 +90,10 @@ def test_get_fgi_returns_current_and_ordered_six_month_history(monkeypatch) -> N
         "ema_13": None,
         "distance_pct": 3.55,
         "search_score": 65.0,
+        "trends_mean": None,
+        "trend_ihsg": None,
+        "trend_idx_composite": None,
+        "trend_indeks_harga_saham_gabungan": None,
     }
     assert [point["date"] for point in response.json()["history"]] == [
         "2026-08-30",

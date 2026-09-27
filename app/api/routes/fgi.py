@@ -40,7 +40,8 @@ _WEEKS_PER_MONTH = 4
 
 _SNAPSHOT_COLUMNS = (
     "week_date, fgi, sentiment, close_price, ma_125, ema_13, distance_pct, "
-    "price_score, search_score, trends_mean, updated_at"
+    "price_score, search_score, trends_mean, trend_ihsg, trend_idx_composite, "
+    "trend_indeks_harga_saham_gabungan, updated_at"
 )
 
 
@@ -121,6 +122,12 @@ def _to_history_point(row: dict[str, Any]) -> FgiHistoryPoint:
         ema_13=_optional_float(row.get("ema_13")),
         distance_pct=float(row["distance_pct"]),
         search_score=float(row["search_score"]),
+        trends_mean=_optional_float(row.get("trends_mean")),
+        trend_ihsg=_optional_float(row.get("trend_ihsg")),
+        trend_idx_composite=_optional_float(row.get("trend_idx_composite")),
+        trend_indeks_harga_saham_gabungan=_optional_float(
+            row.get("trend_indeks_harga_saham_gabungan")
+        ),
     )
 
 
@@ -135,6 +142,12 @@ def _build_response(latest: dict[str, Any], is_stale: bool) -> FgiResponse:
             ema_13=_optional_float(latest.get("ema_13")),
             distance_pct=float(latest["distance_pct"]),
             search_score=float(latest["search_score"]),
+            trends_mean=_optional_float(latest.get("trends_mean")),
+            trend_ihsg=_optional_float(latest.get("trend_ihsg")),
+            trend_idx_composite=_optional_float(latest.get("trend_idx_composite")),
+            trend_indeks_harga_saham_gabungan=_optional_float(
+                latest.get("trend_indeks_harga_saham_gabungan")
+            ),
         ),
         history=[_to_history_point(row) for row in _fetch_snapshots_since(None)],
         updated_at=_parse_updated_at(latest["updated_at"]),
