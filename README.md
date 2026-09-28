@@ -51,6 +51,7 @@ Copy `.env.example` to `.env` and configure the following variables:
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Server-side Supabase service-role key used to read and write index data. Keep this secret. |
 | `ADMIN_SECRET` | Yes in production | Secret required by the manual ingestion endpoint. Replace the example/default value before deployment. |
 | `CORS_ORIGINS` | No | Comma-separated browser origins allowed to call the API. Default: `http://localhost:5173`. |
+| `IDX_CF_CLEARANCE` | No | Optional IDX Cloudflare clearance cookie for the server's network. Keep it server-side; an expired cookie must be replaced. |
 | `ENABLE_SCHEDULER` | No | Set to `true` to enable the in-process 07:00 WIB ingestion job. Default: `false`. |
 
 Example:
@@ -155,6 +156,8 @@ All application routes are prefixed with `/api`.
 | `GET` | `/api/fgi/history?range=1y` | Returns chronological weekly points, oldest first. Accepted ranges: `3m`, `6m`, `1y`, `all`. |
 | `GET` | `/api/fgi/breakdown` | Returns the latest index value and its weighted price-momentum and public-sentiment components. |
 | `GET` | `/api/zones` | Returns historical Fear & Greed zone periods. |
+| `GET` | `/api/trading-summary?limit=30&before=YYYY-MM-DD` | Current daily market totals and paginated history. |
+| `GET` | `/api/trading-summary/current` | Current daily market totals and previous trading-day changes. |
 | `POST` | `/api/admin/ingest` | Runs a manual ingestion. Requires the `X-Admin-Secret` header. |
 
 `GET /api/fgi` returns every snapshot rather than a fixed trailing window, so a client can render any range without a second request. Use `/api/fgi/history` when you want the server to narrow the window instead.
@@ -164,6 +167,12 @@ Every `/api/fgi*` endpoint refreshes automatically when the newest snapshot is o
 `GET /api/fgi/breakdown` reports each component's raw score alongside the weight the engine applies, plus its `contribution` (`value × weight`). Contributions sum to the reported index value, so the breakdown reconstructs the score rather than approximating it.
 
 `GET /api/fgi/current` reports deltas as `vs_last_week` and `vs_month_ago`. The index is weekly, so these are week-over-week comparisons against the previous snapshot and the snapshot four weeks back. A delta is `null` when there is not enough history to compute it.
+
+## Daily Trading Summary
+
+Apply `supabase/migrations/20260927000000_create_trading_summary_sync_state.sql` before deploying the on-demand endpoint. Both trading-summary routes read `GetStockSummary` from IDX when a refresh is due, then upsert the totals to `daily_trading_summary`. During weekday trading hours (09:00–16:15 WIB), successful fetches are reused for 15 minutes. The first request after 16:15 fetches again to replace an intraday value. Once a post-close fetch succeeds, later requests serve Supabase directly until the next trading day. Empty or blocked IDX responses never overwrite stored values.
+
+`current.updated_at` is the last successful fetch time; `current.is_final` means a same-date fetch succeeded after 16:15 WIB. If a due refresh fails while stored data exists, the API returns that data with `current.is_stale=true`. IDX may return a Cloudflare 403 from some server networks, including without an applicable clearance cookie; in that case the API can only serve stored data. The optional `IDX_CF_CLEARANCE` value is never returned to clients.
 
 ## Index Methodology
 

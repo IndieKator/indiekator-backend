@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 from typing import Any
 
-from app.db.supabase import get_supabase
+from app.services.trading_summary_repository import fetch_history_rows
 from app.schemas.trading_summary import (
     TradingDayChange,
     TradingDayCurrent,
@@ -9,28 +9,10 @@ from app.schemas.trading_summary import (
     TradingPaginationInfo,
 )
 
-_SUMMARY_COLUMNS = "date, volume, value_idr, frequency, updated_at"
-
-
 def _parse_datetime(value: str | datetime) -> datetime:
     if isinstance(value, datetime):
         return value
     return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-
-
-def _trading_query():
-    return get_supabase().table("daily_trading_summary").select(_SUMMARY_COLUMNS)
-
-
-def fetch_latest_trading_summary() -> dict[str, Any] | None:
-    result = _trading_query().order("date", desc=True).limit(1).execute()
-    return result.data[0] if result.data else None
-
-
-def fetch_latest_two_records() -> list[dict[str, Any]]:
-    """Return the newest 2 records descending (today, yesterday)."""
-    result = _trading_query().order("date", desc=True).limit(2).execute()
-    return result.data or []
 
 
 def compute_daily_change(
@@ -62,7 +44,11 @@ def to_trading_point(row: dict[str, Any]) -> TradingDayPoint:
 
 
 def build_current_summary(
-    today: dict[str, Any], yesterday: dict[str, Any] | None = None
+    today: dict[str, Any],
+    yesterday: dict[str, Any] | None = None,
+    *,
+    is_final: bool = False,
+    is_stale: bool = False,
 ) -> TradingDayCurrent:
     frequency = int(today["frequency"])
     value_idr = float(today["value_idr"])
@@ -84,6 +70,8 @@ def build_current_summary(
         avg_trade_size=avg_trade_size,
         change=change,
         updated_at=updated_at,
+        is_final=is_final,
+        is_stale=is_stale,
     )
 
 
@@ -95,12 +83,7 @@ def fetch_trading_history_paginated(
     Fetches limit + 1 records descending to detect if more historical data exists,
     then reverses them for chart display.
     """
-    query = _trading_query()
-    if before_date:
-        query = query.lt("date", before_date)
-
-    result = query.order("date", desc=True).limit(limit + 1).execute()
-    rows = result.data or []
+    rows = fetch_history_rows(limit, before_date)
 
     has_more = len(rows) > limit
     target_rows = rows[:limit]
@@ -118,20 +101,3 @@ def fetch_trading_history_paginated(
         newest_date=newest_date,
     )
     return points, pagination
-
-
-def upsert_trading_records(records: list[dict[str, Any]]) -> int:
-    """Upsert trading records into Supabase daily_trading_summary table."""
-    if not records:
-        return 0
-
-    supabase = get_supabase()
-    result = (
-        supabase.table("daily_trading_summary")
-        .upsert(
-            records,
-            on_conflict="date",
-        )
-        .execute()
-    )
-    return len(result.data or records)
