@@ -77,15 +77,15 @@ jobs:
           project_id: ${{ env.PROJECT_ID }}
           token_format: "access_token"
 
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
       - name: Log in to Artifact Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGION }}-docker.pkg.dev
           username: oauth2accesstoken
           password: ${{ steps.auth.outputs.access_token }}
-
-      - name: Set up Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v3
 
       - name: Build and push image
         id: image
