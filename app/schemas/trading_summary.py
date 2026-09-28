@@ -23,6 +23,8 @@ class TradingDayCurrent(BaseModel):
     avg_trade_size: float
     change: TradingDayChange
     updated_at: datetime
+    is_final: bool = False
+    is_stale: bool = False
 
 
 class TradingPaginationInfo(BaseModel):

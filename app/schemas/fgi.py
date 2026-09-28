@@ -13,20 +13,28 @@ class FgiCurrentResponse(BaseModel):
     value: float
     sentiment: str
     close_price: float
-    ma_125: float
+    ma_30: float
     ema_13: float | None
     distance_pct: float
     search_score: float
+    trends_mean: float | None = None
+    trend_ihsg: float | None = None
+    trend_idx_composite: float | None = None
+    trend_indeks_harga_saham_gabungan: float | None = None
 
 
 class FgiHistoryPoint(BaseModel):
     date: date
     value: float
     close_price: float
-    ma_125: float
+    ma_30: float
     ema_13: float | None
     distance_pct: float
     search_score: float
+    trends_mean: float | None = None
+    trend_ihsg: float | None = None
+    trend_idx_composite: float | None = None
+    trend_indeks_harga_saham_gabungan: float | None = None
 
 
 class FgiResponse(BaseModel):
@@ -56,7 +64,7 @@ class FgiCurrentDetailResponse(BaseModel):
     zone_label: str
     summary: str
     close_price: float
-    ma_125: float
+    ma_30: float
     ema_13: float | None
     distance_pct: float
     price_score: float
@@ -71,6 +79,21 @@ class FgiHistoryResponse(BaseModel):
     range: RangeKey
     count: int
     data: list[FgiHistoryPoint]
+
+
+class FgiBriefResponse(BaseModel):
+    """AI-generated plain-English weekly market brief.
+
+    ``source`` is ``"ollama"`` when the text came from the model and
+    ``"fallback"`` when the deterministic template was used (missing key or the
+    model call failed), so the client can tell them apart if needed.
+    """
+
+    date: date
+    brief: str
+    source: Literal["ollama", "fallback"]
+    updated_at: datetime
+    is_stale: bool
 
 
 class FgiComponent(BaseModel):

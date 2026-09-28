@@ -1,0 +1,122 @@
+name: Backend CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SECTORS_API_KEY: test-sectors-key
+      SUPABASE_URL: https://test.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: test-service-role-key
+      ADMIN_SECRET: test-admin-secret
+      ENABLE_SCHEDULER: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.11.8"
+          enable-cache: true
+      - name: Install Python and locked dependencies
+        run: |
+          uv python install 3.12
+          uv sync --locked --dev
+      - name: Run tests
+        run: uv run --no-sync pytest -q
+      - name: Build Linux image
+        run: docker build --platform linux/amd64 -t indiekator-backend:ci .
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: ci
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: indiekator-backend-cloud-run
+      cancel-in-progress: false
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      REPOSITORY: ${{ vars.GCP_ARTIFACT_REPOSITORY }}
+      SERVICE: ${{ vars.GCP_CLOUD_RUN_SERVICE }}
+      SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check deployment variables
+        env:
+          WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+        run: |
+          for name in PROJECT_ID REGION REPOSITORY SERVICE SERVICE_ACCOUNT WIF_PROVIDER SUPABASE_URL CORS_ORIGINS; do
+            if [ -z "${!name}" ]; then
+              echo "Missing GitHub Actions variable: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Artifact Registry access
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        id: image
+        run: |
+          image_uri="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE}:${GITHUB_SHA}"
+
+          docker build \
+            --platform linux/amd64 \
+            -t "$image_uri" .
+
+          docker push "$image_uri"
+
+          echo "uri=$image_uri" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v3
+        with:
+          service: ${{ env.SERVICE }}
+          image: ${{ steps.image.outputs.uri }}
+          region: ${{ env.REGION }}
+          project_id: ${{ env.PROJECT_ID }}
+
+          flags: >-
+            --allow-unauthenticated
+            --service-account=${{ env.SERVICE_ACCOUNT }}
+            --port=8080
+            --memory=1Gi
+            --timeout=900
+            --max-instances=1
+
+          env_vars: |-
+            SUPABASE_URL=${{ vars.SUPABASE_URL }}
+            CORS_ORIGINS=${{ vars.CORS_ORIGINS }}
+            ENABLE_SCHEDULER=false
+
+          secrets: |-
+            SECTORS_API_KEY=indiekator-sectors-api-key:latest
+            SUPABASE_SERVICE_ROLE_KEY=indiekator-supabase-service-role-key:latest
+            ADMIN_SECRET=indiekator-admin-secret:latest

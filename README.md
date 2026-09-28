@@ -8,7 +8,7 @@ A FastAPI service that calculates and exposes an IHSG (Indonesia Stock Exchange 
 - Ingestion from Sectors.app and Google Trends
 - Supabase-backed snapshot history, zone periods, and ingestion-run records
 - Manual ingestion endpoint protected by an admin secret
-- Automatic daily ingestion at 07:00 Asia/Jakarta
+- On-demand ingestion, with an optional daily job at 07:00 Asia/Jakarta
 - OpenAPI documentation through FastAPI
 
 ## Prerequisites
@@ -51,6 +51,8 @@ Copy `.env.example` to `.env` and configure the following variables:
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Server-side Supabase service-role key used to read and write index data. Keep this secret. |
 | `ADMIN_SECRET` | Yes in production | Secret required by the manual ingestion endpoint. Replace the example/default value before deployment. |
 | `CORS_ORIGINS` | No | Comma-separated browser origins allowed to call the API. Default: `http://localhost:5173`. |
+| `IDX_CF_CLEARANCE` | No | Optional IDX Cloudflare clearance cookie for the server's network. Keep it server-side; an expired cookie must be replaced. |
+| `ENABLE_SCHEDULER` | No | Set to `true` to enable the in-process 07:00 WIB ingestion job. Default: `false`. |
 
 Example:
 
@@ -81,7 +83,32 @@ python -m pip install .
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-The application includes an in-process scheduler. Run a single scheduler-owning application instance unless duplicate daily ingestions are acceptable. Multiple workers or replicas can each register the same scheduled job.
+The application includes an optional in-process scheduler. Set `ENABLE_SCHEDULER=true` to start it. Run a single scheduler-owning application instance unless duplicate daily ingestions are acceptable. Multiple workers or replicas can each register the same scheduled job.
+
+On Cloud Run, leave `ENABLE_SCHEDULER=false`. The FGI endpoints refresh a snapshot on the first request after it becomes more than 24 hours old.
+
+## Cloud Run CI/CD
+
+The [GitHub Actions workflow](.github/workflows/cloud_run.yml) runs tests and builds the Docker image for pull requests to `main`. A push to `main` also pushes an image tagged with the commit SHA to Artifact Registry and deploys it to Cloud Run. It does not run a scheduler or cron job.
+
+Create an Artifact Registry Docker repository and one Google service account for both GitHub deployment and the Cloud Run runtime. Configure a Workload Identity Federation provider restricted to `IndieKator/indiekator-backend` on `refs/heads/main`, then grant its principal `roles/iam.workloadIdentityUser` on that service account. Grant the service account `roles/run.admin` on the project, `roles/artifactregistry.writer` on the repository, and `roles/iam.serviceAccountUser` on itself so it can deploy the Cloud Run service using the same identity. Give it access to the three Secret Manager secrets below. Enable the Cloud Run, Artifact Registry, IAM Credentials, and Secret Manager APIs in the project.
+
+Set these **GitHub repository variables** under Settings → Secrets and variables → Actions → Variables:
+
+| Variable | Value |
+| --- | --- |
+| `GCP_PROJECT_ID` | Google Cloud project ID |
+| `GCP_REGION` | Artifact Registry and Cloud Run region, for example `asia-southeast2` |
+| `GCP_ARTIFACT_REPOSITORY` | Existing Artifact Registry Docker repository name |
+| `GCP_CLOUD_RUN_SERVICE` | Cloud Run service name, for example `indiekator-backend` |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Full provider name: `projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL/providers/PROVIDER` |
+| `GCP_SERVICE_ACCOUNT` | Service account email used for deployment and Cloud Run runtime |
+| `SUPABASE_URL` | Supabase project URL |
+| `CORS_ORIGINS` | Frontend origin, for example `https://app.example.com` |
+
+Create Google Secret Manager secrets named `indiekator-sectors-api-key`, `indiekator-supabase-service-role-key`, and `indiekator-admin-secret` with the corresponding `SECTORS_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and a strong `ADMIN_SECRET`. Grant the service account `roles/secretmanager.secretAccessor` on those secrets. Do not put secret values in GitHub variables or in `.env` committed to Git. For Ollama Cloud, create a separate secret and add `OLLAMA_API_KEY=YOUR_SECRET_NAME:latest` to the workflow's `secrets` input; the chat endpoint needs that key.
+
+After merging into `main`, check the workflow run, then request `GET /api/health` and `GET /api/fgi` at the deployed Cloud Run URL. The first FGI request can take longer while it ingests data. Apply the Supabase migrations before using the deployed API. The workflow does not create the Google Cloud project, repository, IAM bindings, secrets, or Supabase schema.
 
 ## Initial Data Ingestion
 
@@ -105,7 +132,7 @@ A successful response includes the ingestion status, number of weekly snapshots 
 
 ## Scheduled Ingestion
 
-When the application starts, APScheduler registers a daily ingestion job at **07:00 Asia/Jakarta (WIB)**. The job uses the same ingestion pipeline as the manual endpoint: there is a single entry point, which upserts `fgi_snapshots`, rebuilds `zone_periods` from those snapshots, and records the attempt in `ingestion_runs`.
+When `ENABLE_SCHEDULER=true`, APScheduler registers a daily ingestion job at **07:00 Asia/Jakarta (WIB)**. The default is `false`, so no job is scheduled unless explicitly enabled. The job uses the same ingestion pipeline as the manual endpoint: there is a single entry point, which upserts `fgi_snapshots`, rebuilds `zone_periods` from those snapshots, and records the attempt in `ingestion_runs`.
 
 The daily cadence against a weekly index is intentional. Each run recomputes the current in-progress week and refreshes recent Trends values, which providers may revise after the fact.
 
@@ -129,6 +156,8 @@ All application routes are prefixed with `/api`.
 | `GET` | `/api/fgi/history?range=1y` | Returns chronological weekly points, oldest first. Accepted ranges: `3m`, `6m`, `1y`, `all`. |
 | `GET` | `/api/fgi/breakdown` | Returns the latest index value and its weighted price-momentum and public-sentiment components. |
 | `GET` | `/api/zones` | Returns historical Fear & Greed zone periods. |
+| `GET` | `/api/trading-summary?limit=30&before=YYYY-MM-DD` | Current daily market totals and paginated history. |
+| `GET` | `/api/trading-summary/current` | Current daily market totals and previous trading-day changes. |
 | `POST` | `/api/admin/ingest` | Runs a manual ingestion. Requires the `X-Admin-Secret` header. |
 
 `GET /api/fgi` returns every snapshot rather than a fixed trailing window, so a client can render any range without a second request. Use `/api/fgi/history` when you want the server to narrow the window instead.
@@ -138,6 +167,12 @@ Every `/api/fgi*` endpoint refreshes automatically when the newest snapshot is o
 `GET /api/fgi/breakdown` reports each component's raw score alongside the weight the engine applies, plus its `contribution` (`value × weight`). Contributions sum to the reported index value, so the breakdown reconstructs the score rather than approximating it.
 
 `GET /api/fgi/current` reports deltas as `vs_last_week` and `vs_month_ago`. The index is weekly, so these are week-over-week comparisons against the previous snapshot and the snapshot four weeks back. A delta is `null` when there is not enough history to compute it.
+
+## Daily Trading Summary
+
+Apply `supabase/migrations/20260927000000_create_trading_summary_sync_state.sql` before deploying the on-demand endpoint. Both trading-summary routes read `GetStockSummary` from IDX when a refresh is due, then upsert the totals to `daily_trading_summary`. During weekday trading hours (09:00–16:15 WIB), successful fetches are reused for 15 minutes. The first request after 16:15 fetches again to replace an intraday value. Once a post-close fetch succeeds, later requests serve Supabase directly until the next trading day. Empty or blocked IDX responses never overwrite stored values.
+
+`current.updated_at` is the last successful fetch time; `current.is_final` means a same-date fetch succeeded after 16:15 WIB. If a due refresh fails while stored data exists, the API returns that data with `current.is_stale=true`. IDX may return a Cloudflare 403 from some server networks, including without an applicable clearance cookie; in that case the API can only serve stored data. The optional `IDX_CF_CLEARANCE` value is never returned to clients.
 
 ## Index Methodology
 

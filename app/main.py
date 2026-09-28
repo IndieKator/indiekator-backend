@@ -5,7 +5,7 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import admin, fgi, trading_summary, zones
+from app.api.routes import admin, chat, fgi, market_movers, trading_summary, zones
 from app.config import get_settings
 from app.services.ingestion import run_ingestion
 
@@ -21,6 +21,10 @@ def _scheduled_ingest() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not get_settings().enable_scheduler:
+        yield
+        return
+
     scheduler.add_job(
         _scheduled_ingest,
         CronTrigger(hour=7, minute=0, timezone="Asia/Jakarta"),
@@ -28,8 +32,10 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
     scheduler.start()
-    yield
-    scheduler.shutdown()
+    try:
+        yield
+    finally:
+        scheduler.shutdown()
 
 
 def create_app() -> FastAPI:
@@ -50,7 +56,9 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(admin.router, prefix="/api")
+    app.include_router(chat.router, prefix="/api")
     app.include_router(fgi.router, prefix="/api")
+    app.include_router(market_movers.router, prefix="/api")
     app.include_router(trading_summary.router, prefix="/api")
     app.include_router(zones.router, prefix="/api")
 
