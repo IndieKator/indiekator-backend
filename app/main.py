@@ -21,6 +21,10 @@ def _scheduled_ingest() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not get_settings().enable_scheduler:
+        yield
+        return
+
     scheduler.add_job(
         _scheduled_ingest,
         CronTrigger(hour=7, minute=0, timezone="Asia/Jakarta"),
@@ -28,8 +32,10 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
     scheduler.start()
-    yield
-    scheduler.shutdown()
+    try:
+        yield
+    finally:
+        scheduler.shutdown()
 
 
 def create_app() -> FastAPI:
