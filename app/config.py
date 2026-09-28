@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     admin_secret: str = "changeme"
     cors_origins: str = "http://localhost:5173"
     idx_cf_clearance: str = ""
+    enable_scheduler: bool = False
 
     # Ollama Cloud powers the AI market brief. The key authenticates direct
     # requests to ollama.com; base URL and model can be overridden per-env.

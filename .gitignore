@@ -1,4 +1,5 @@
 .env
+gha-creds-*.json
 /.agents
 .venv/
 .uv-cache-fgi/
