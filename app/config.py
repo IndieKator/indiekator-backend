@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: str
     admin_secret: str = "changeme"
     cors_origins: str = "http://localhost:5173"
+    enable_scheduler: bool = False
 
     # Ollama Cloud powers the AI market brief. The key authenticates direct
     # requests to ollama.com; base URL and model can be overridden per-env.
