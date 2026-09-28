@@ -69,18 +69,23 @@ jobs:
           done
 
       - name: Authenticate to Google Cloud
+        id: auth
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.SERVICE_ACCOUNT }}
           project_id: ${{ env.PROJECT_ID }}
+          token_format: "access_token"
+
+      - name: Log in to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
 
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v3
-
-      - name: Configure Artifact Registry access
-        run: |
-          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
       - name: Build and push image
         id: image
