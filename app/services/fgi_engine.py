@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 import numpy as np
 import pandas as pd
 
-from app.services.fgi_trends_client import fetch_fgi_google_trends
+from app.services.fgi_trends_client import FGI_KEYWORDS, fetch_google_trends
 from app.services.sectors_client import fetch_ihsg_prices
 
 FGI_LOOKBACK_MONTHS = 18
@@ -16,6 +16,12 @@ SEARCH_WEIGHT = 0.40
 
 # Rolling window (in daily closes) for the moving average stored as ``ma_30``.
 MA_WINDOW = 30
+
+LEGACY_TREND_COLUMNS = {
+    "ihsg": "trend_ihsg",
+    "idx composite": "trend_idx_composite",
+    "indeks harga saham gabungan": "trend_indeks_harga_saham_gabungan",
+}
 
 
 def classify_fgi(value: float) -> str:
@@ -30,8 +36,20 @@ def classify_fgi(value: float) -> str:
     return "Extreme Greed"
 
 
+def calculate_keyword_fgi(
+    price_score: float,
+    distance_pct: float,
+    trend_score: float,
+) -> tuple[float, float]:
+    """Return search and FGI scores when one keyword supplies search interest."""
+    market_direction = float(np.sign(distance_pct))
+    search_score = float(np.clip(50 + (trend_score - 50) * market_direction, 0, 100))
+    fgi_score = round(PRICE_WEIGHT * price_score + SEARCH_WEIGHT * search_score, 2)
+    return round(search_score, 2), fgi_score
+
+
 def compute_fgi(as_of: date | None = None) -> pd.DataFrame:
-    """Calculate the weekly FGI using the formula from ``logic.py``."""
+    """Calculate weekly FGI and retain its source trend observations in attrs."""
     end_date = as_of or datetime.now(timezone.utc).date()
     start_date = (pd.Timestamp(end_date) - pd.DateOffset(months=FGI_LOOKBACK_MONTHS)).date()
     lookback_days = (end_date - start_date).days + 1
@@ -40,17 +58,13 @@ def compute_fgi(as_of: date | None = None) -> pd.DataFrame:
     prices["ma_30"] = prices["Close"].rolling(window=MA_WINDOW).mean()
     weekly_prices = prices[["Close", "ma_30"]].resample("W-SUN").last().dropna()
 
-    trends = fetch_fgi_google_trends(start_date, end_date)
-    weekly = weekly_prices.join(trends, how="inner").dropna()
+    trend_snapshots = fetch_google_trends(FGI_KEYWORDS, start_date, end_date)
+    trends = trend_snapshots.pivot(index="date", columns="keyword", values="score")
+    weekly = weekly_prices.join(trends, how="inner").dropna(subset=list(FGI_KEYWORDS))
     if weekly.empty:
         raise RuntimeError("No overlapping weekly IHSG and Google Trends data for FGI")
 
-    trend_columns = [
-        "trend_ihsg",
-        "trend_idx_composite",
-        "trend_indeks_harga_saham_gabungan",
-    ]
-    weekly["trends_mean"] = weekly[trend_columns].mean(axis=1)
+    weekly["trends_mean"] = weekly[list(FGI_KEYWORDS)].mean(axis=1)
     weekly["distance_pct"] = ((weekly["Close"] - weekly["ma_30"]) / weekly["ma_30"]) * 100
     weekly["price_score"] = (50 + (weekly["distance_pct"] / 6.0) * 50).clip(0, 100)
     market_direction = np.sign(weekly["distance_pct"])
@@ -60,7 +74,9 @@ def compute_fgi(as_of: date | None = None) -> pd.DataFrame:
     ).round(2)
     weekly["sentiment"] = weekly["fgi"].map(classify_fgi)
 
-    return weekly.rename(columns={"Close": "close_price"})
+    result = weekly.rename(columns={"Close": "close_price"})
+    result.attrs["trend_snapshots"] = trend_snapshots
+    return result
 
 
 def fgi_to_records(
@@ -77,9 +93,6 @@ def fgi_to_records(
         "fgi",
         "sentiment",
         "trends_mean",
-        "trend_ihsg",
-        "trend_idx_composite",
-        "trend_indeks_harga_saham_gabungan",
     ]
     records: list[dict] = []
     for week_date, row in dataframe.iterrows():
@@ -90,5 +103,7 @@ def fgi_to_records(
         for column in record_columns:
             value = row[column]
             record[column] = value if column == "sentiment" else round(float(value), 2)
+        for keyword, column in LEGACY_TREND_COLUMNS.items():
+            record[column] = round(float(row[keyword]), 2)
         records.append(record)
     return records

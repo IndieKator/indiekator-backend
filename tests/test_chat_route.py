@@ -129,9 +129,6 @@ def test_market_context_uses_the_database_columns() -> None:
             "ma_30": 6485.87,
             "ema_13": 6407.62,
             "trends_mean": 11.0,
-            "trend_ihsg": 4.0,
-            "trend_idx_composite": 0.0,
-            "trend_indeks_harga_saham_gabungan": 29.0,
         },
         {"week_date": "2026-09-20", "fgi": 50.0, "close_price": 6300.0},
     ]
@@ -141,7 +138,7 @@ def test_market_context_uses_the_database_columns() -> None:
     assert "Current IHSG close: 6,241.89" in text
     assert "Current EMA 13: 6,407.62" in text
     assert "Current MA 30: 6,485.87" in text
-    assert "trends_mean, 0-100): 11.0" in text
+    assert "configured FGI mean, 0-100): 11.0" in text
     assert "Current Fear & Greed Index: 47 (Neutral)" in text
     assert "Previous Fear & Greed Index: 50" in text
     # The current block must come before the previous-week block.

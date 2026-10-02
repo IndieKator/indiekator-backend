@@ -13,9 +13,7 @@ from typing import Any
 from app.db.supabase import get_supabase
 
 _COLUMNS = (
-    "week_date, fgi, sentiment, close_price, ma_30, ema_13, "
-    "trends_mean, trend_ihsg, trend_idx_composite, "
-    "trend_indeks_harga_saham_gabungan"
+    "week_date, fgi, sentiment, close_price, ma_30, ema_13, trends_mean"
 )
 
 NO_DATA_CONTEXT = "No market snapshot is available right now."
@@ -56,12 +54,8 @@ def format_market_context(rows: list[dict[str, Any]]) -> str:
         f"({latest['sentiment']})",
         f"- Current EMA 13: {_fmt(ema13)} (IHSG {_pct(close, ema13)} vs EMA 13)",
         f"- Current MA 30: {_fmt(ma30)} (IHSG {_pct(close, ma30)} vs MA 30)",
-        "- Current Google Trends search interest (trends_mean, 0-100): "
-        f"{_fmt(trends, 1)}; the mean of keywords ihsg "
-        f"({_fmt(_num(latest.get('trend_ihsg')), 0)}), idx composite "
-        f"({_fmt(_num(latest.get('trend_idx_composite')), 0)}), indeks harga "
-        "saham gabungan "
-        f"({_fmt(_num(latest.get('trend_indeks_harga_saham_gabungan')), 0)})",
+        "- Current Google Trends search interest (configured FGI mean, 0-100): "
+        f"{_fmt(trends, 1)}",
     ]
     if prev is not None:
         prev_close = float(prev["close_price"])

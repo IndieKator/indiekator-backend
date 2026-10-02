@@ -18,9 +18,6 @@ class FgiCurrentResponse(BaseModel):
     distance_pct: float
     search_score: float
     trends_mean: float | None = None
-    trend_ihsg: float | None = None
-    trend_idx_composite: float | None = None
-    trend_indeks_harga_saham_gabungan: float | None = None
 
 
 class FgiHistoryPoint(BaseModel):
@@ -32,9 +29,6 @@ class FgiHistoryPoint(BaseModel):
     distance_pct: float
     search_score: float
     trends_mean: float | None = None
-    trend_ihsg: float | None = None
-    trend_idx_composite: float | None = None
-    trend_indeks_harga_saham_gabungan: float | None = None
 
 
 class FgiResponse(BaseModel):
@@ -42,6 +36,47 @@ class FgiResponse(BaseModel):
     history: list[FgiHistoryPoint]
     updated_at: datetime
     is_stale: bool
+
+
+class TrendSnapshotPoint(BaseModel):
+    date: date
+    index_name: str
+    keyword: str
+    score: float
+    search_score: float | None = None
+    fgi_score: float | None = None
+    sentiment: str | None = None
+
+
+class TrendAggregatePoint(BaseModel):
+    date: date
+    index_name: str
+    keywords: list[str]
+    trends_mean: float
+    search_score: float
+    fgi_score: float
+    sentiment: str
+
+
+class TrendHistoryResponse(BaseModel):
+    index_name: str
+    keywords: list[str]
+    count: int
+    data: list[TrendSnapshotPoint]
+    aggregate: list[TrendAggregatePoint]
+
+
+class TrendRefreshRequest(BaseModel):
+    index_name: str = Field(default="ihsg", min_length=1, max_length=64)
+    keywords: list[str] = Field(min_length=1, max_length=5)
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+class TrendRefreshResponse(BaseModel):
+    index_name: str
+    keywords: list[str]
+    count: int
 
 
 class FgiDelta(BaseModel):
@@ -82,12 +117,7 @@ class FgiHistoryResponse(BaseModel):
 
 
 class FgiBriefResponse(BaseModel):
-    """AI-generated plain-English weekly market brief.
-
-    ``source`` is ``"ollama"`` when the text came from the model and
-    ``"fallback"`` when the deterministic template was used (missing key or the
-    model call failed), so the client can tell them apart if needed.
-    """
+    """AI-generated plain-English weekly market brief."""
 
     date: date
     brief: str
