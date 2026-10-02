@@ -20,16 +20,15 @@ def test_compute_fgi_uses_weighted_price_and_search_scores(monkeypatch) -> None:
     prices = pd.DataFrame({"Close": np.linspace(100.0, 130.0, len(dates))}, index=dates)
     week_dates = prices.resample("W-SUN").last().index
     trends = pd.DataFrame(
-        {
-            "trend_ihsg": 75,
-            "trend_idx_composite": 75,
-            "trend_indeks_harga_saham_gabungan": 75,
-        },
-        index=week_dates,
+        [
+            {"date": week_date, "keyword": keyword, "score": 75}
+            for week_date in week_dates
+            for keyword in fgi_engine.FGI_KEYWORDS
+        ]
     )
 
     monkeypatch.setattr(fgi_engine, "fetch_ihsg_prices", lambda _: prices)
-    monkeypatch.setattr(fgi_engine, "fetch_fgi_google_trends", lambda *_: trends)
+    monkeypatch.setattr(fgi_engine, "fetch_google_trends", lambda *_: trends)
 
     result = fgi_engine.compute_fgi(as_of=date(2025, 9, 1))
 
@@ -46,16 +45,15 @@ def test_compute_fgi_uses_30_period_moving_average(monkeypatch) -> None:
     prices = pd.DataFrame({"Close": closes}, index=dates)
     week_dates = prices.resample("W-SUN").last().index
     trends = pd.DataFrame(
-        {
-            "trend_ihsg": 60,
-            "trend_idx_composite": 60,
-            "trend_indeks_harga_saham_gabungan": 60,
-        },
-        index=week_dates,
+        [
+            {"date": week_date, "keyword": keyword, "score": 60}
+            for week_date in week_dates
+            for keyword in fgi_engine.FGI_KEYWORDS
+        ]
     )
 
     monkeypatch.setattr(fgi_engine, "fetch_ihsg_prices", lambda _: prices)
-    monkeypatch.setattr(fgi_engine, "fetch_fgi_google_trends", lambda *_: trends)
+    monkeypatch.setattr(fgi_engine, "fetch_google_trends", lambda *_: trends)
 
     result = fgi_engine.compute_fgi(as_of=date(2025, 9, 1))
 
@@ -73,16 +71,15 @@ def test_fgi_to_records_emits_ma_30(monkeypatch) -> None:
     prices = pd.DataFrame({"Close": np.linspace(100.0, 130.0, len(dates))}, index=dates)
     week_dates = prices.resample("W-SUN").last().index
     trends = pd.DataFrame(
-        {
-            "trend_ihsg": 60,
-            "trend_idx_composite": 60,
-            "trend_indeks_harga_saham_gabungan": 60,
-        },
-        index=week_dates,
+        [
+            {"date": week_date, "keyword": keyword, "score": 60}
+            for week_date in week_dates
+            for keyword in fgi_engine.FGI_KEYWORDS
+        ]
     )
 
     monkeypatch.setattr(fgi_engine, "fetch_ihsg_prices", lambda _: prices)
-    monkeypatch.setattr(fgi_engine, "fetch_fgi_google_trends", lambda *_: trends)
+    monkeypatch.setattr(fgi_engine, "fetch_google_trends", lambda *_: trends)
 
     records = fgi_engine.fgi_to_records(fgi_engine.compute_fgi(as_of=date(2025, 9, 1)))
 
