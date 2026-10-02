@@ -15,8 +15,16 @@ from app.schemas.fgi import (
     FgiHistoryResponse,
     FgiResponse,
     RangeKey,
+    TrendAggregatePoint,
+    TrendHistoryResponse,
+    TrendRefreshRequest,
+    TrendRefreshResponse,
+    TrendSnapshotPoint,
 )
 from app.services.ingestion import run_ingestion
+from app.services.fgi_engine import calculate_keyword_fgi, classify_fgi
+from app.services.fgi_ingestion import upsert_trend_snapshots
+from app.services.fgi_trends_client import FGI_INDEX_NAME, normalize_keywords
 from app.services.fgi_presentation import (
     build_components,
     build_summary,
@@ -32,6 +40,7 @@ STALE_AFTER = timedelta(hours=24)
 BRIEF_TTL = timedelta(hours=24)
 _refresh_lock = Lock()
 _brief_lock = Lock()
+_trend_refresh_lock = Lock()
 
 RANGE_DAYS: dict[str, int | None] = {
     "3m": 90,
@@ -49,8 +58,7 @@ _EMA_WINDOW = 20
 
 _SNAPSHOT_COLUMNS = (
     "week_date, fgi, sentiment, close_price, ma_30, ema_13, distance_pct, "
-    "price_score, search_score, trends_mean, trend_ihsg, trend_idx_composite, "
-    "trend_indeks_harga_saham_gabungan, updated_at"
+    "price_score, search_score, trends_mean, updated_at"
 )
 
 
@@ -122,6 +130,179 @@ def _resolve_snapshot() -> tuple[dict[str, Any], bool]:
     return refreshed, False
 
 
+def _normalize_index_name(index_name: str) -> str:
+    normalized = " ".join(index_name.lower().split())
+    if not normalized or len(normalized) > 64:
+        raise HTTPException(status_code=422, detail="index_name must contain 1 to 64 characters")
+    return normalized
+
+
+def _fetch_oldest_snapshot_date() -> date:
+    row = _snapshot_query().order("week_date", desc=False).limit(1).execute().data
+    if not row:
+        raise HTTPException(status_code=503, detail="FGI data unavailable")
+    return date.fromisoformat(row[0]["week_date"])
+
+
+def _nearest_fgi_row(
+    trend_date: date,
+    fgi_rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Match a Trends period to the closest weekly FGI price snapshot."""
+    if not fgi_rows:
+        return None
+    return min(
+        fgi_rows,
+        key=lambda row: abs(date.fromisoformat(row["week_date"]) - trend_date),
+    )
+
+
+@router.get("/trends", response_model=TrendHistoryResponse)
+def get_fgi_trends(
+    keywords: list[str] = Query(...),
+    index_name: str = Query(default=FGI_INDEX_NAME),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+) -> TrendHistoryResponse:
+    """Read long-form, persisted Google Trends observations for chosen keywords."""
+    try:
+        normalized_keywords = normalize_keywords(keywords)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=422, detail="start_date must not be after end_date")
+
+    normalized_index = _normalize_index_name(index_name)
+    trend_rows: list[dict[str, Any]] = []
+    for keyword in normalized_keywords:
+        query = (
+            get_supabase()
+            .table("trend_snapshots")
+            .select("date, index_name, keyword, score")
+            .eq("index_name", normalized_index)
+            .eq("keyword", keyword)
+        )
+        if start_date:
+            query = query.gte("date", start_date.isoformat())
+        if end_date:
+            query = query.lte("date", end_date.isoformat())
+        result = query.order("date", desc=False).execute()
+        trend_rows.extend(result.data or [])
+    trend_rows.sort(key=lambda row: (row["date"], row["keyword"]))
+
+    fgi_query = (
+        get_supabase()
+        .table("fgi_snapshots")
+        .select("week_date, price_score, distance_pct")
+    )
+    if start_date:
+        fgi_query = fgi_query.gte("week_date", (start_date - timedelta(days=7)).isoformat())
+    if end_date:
+        fgi_query = fgi_query.lte("week_date", (end_date + timedelta(days=7)).isoformat())
+    fgi_result = fgi_query.order("week_date", desc=False).execute()
+    fgi_rows = fgi_result.data or []
+
+    points: list[TrendSnapshotPoint] = []
+    for row in trend_rows:
+        trend_date = date.fromisoformat(row["date"])
+        fgi_row = _nearest_fgi_row(trend_date, fgi_rows)
+        search_score: float | None = None
+        fgi_score: float | None = None
+        sentiment: str | None = None
+        if fgi_row is not None:
+            search_score, fgi_score = calculate_keyword_fgi(
+                price_score=float(fgi_row["price_score"]),
+                distance_pct=float(fgi_row["distance_pct"]),
+                trend_score=float(row["score"]),
+            )
+            sentiment = classify_fgi(fgi_score)
+        points.append(
+            TrendSnapshotPoint(
+                date=trend_date,
+                index_name=row["index_name"],
+                keyword=row["keyword"],
+                score=float(row["score"]),
+                search_score=search_score,
+                fgi_score=fgi_score,
+                sentiment=sentiment,
+            )
+        )
+    aggregate: list[TrendAggregatePoint] = []
+    trend_rows_by_keyword = {
+        keyword: [row for row in trend_rows if row["keyword"] == keyword]
+        for keyword in normalized_keywords
+    }
+    for fgi_row in fgi_rows:
+        fgi_date = date.fromisoformat(fgi_row["week_date"])
+        keyword_scores: list[float] = []
+        for keyword in normalized_keywords:
+            candidates = trend_rows_by_keyword[keyword]
+            if not candidates:
+                break
+            nearest = min(
+                candidates,
+                key=lambda row: abs(date.fromisoformat(row["date"]) - fgi_date),
+            )
+            keyword_scores.append(float(nearest["score"]))
+        if len(keyword_scores) != len(normalized_keywords):
+            continue
+
+        trends_mean = round(sum(keyword_scores) / len(keyword_scores), 2)
+        search_score, fgi_score = calculate_keyword_fgi(
+            price_score=float(fgi_row["price_score"]),
+            distance_pct=float(fgi_row["distance_pct"]),
+            trend_score=trends_mean,
+        )
+        aggregate.append(
+            TrendAggregatePoint(
+                date=fgi_date,
+                index_name=normalized_index,
+                keywords=normalized_keywords,
+                trends_mean=trends_mean,
+                search_score=search_score,
+                fgi_score=fgi_score,
+                sentiment=classify_fgi(fgi_score),
+            )
+        )
+
+    return TrendHistoryResponse(
+        index_name=normalized_index,
+        keywords=normalized_keywords,
+        count=len(points),
+        data=points,
+        aggregate=aggregate,
+    )
+
+
+@router.post("/trends/refresh", response_model=TrendRefreshResponse)
+def refresh_fgi_trends(request: TrendRefreshRequest) -> TrendRefreshResponse:
+    """Calculate selected Google Trends keywords and save their snapshots.
+
+    The provider request is serialized to avoid sending concurrent bursts to
+    Google Trends. The normal ``GET /trends`` endpoint only reads persisted
+    data; clients call this explicitly when adding a new keyword.
+    """
+    try:
+        keywords = normalize_keywords(request.keywords)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    index_name = _normalize_index_name(request.index_name)
+    start_date = request.start_date or _fetch_oldest_snapshot_date()
+    end_date = request.end_date or datetime.now(timezone.utc).date()
+    if start_date > end_date:
+        raise HTTPException(status_code=422, detail="start_date must not be after end_date")
+
+    try:
+        with _trend_refresh_lock:
+            count = upsert_trend_snapshots(keywords, start_date, end_date, index_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return TrendRefreshResponse(index_name=index_name, keywords=keywords, count=count)
+
+
 def _to_history_point(row: dict[str, Any]) -> FgiHistoryPoint:
     return FgiHistoryPoint(
         date=date.fromisoformat(row["week_date"]),
@@ -132,11 +313,6 @@ def _to_history_point(row: dict[str, Any]) -> FgiHistoryPoint:
         distance_pct=float(row["distance_pct"]),
         search_score=float(row["search_score"]),
         trends_mean=_optional_float(row.get("trends_mean")),
-        trend_ihsg=_optional_float(row.get("trend_ihsg")),
-        trend_idx_composite=_optional_float(row.get("trend_idx_composite")),
-        trend_indeks_harga_saham_gabungan=_optional_float(
-            row.get("trend_indeks_harga_saham_gabungan")
-        ),
     )
 
 
@@ -152,11 +328,6 @@ def _build_response(latest: dict[str, Any], is_stale: bool) -> FgiResponse:
             distance_pct=float(latest["distance_pct"]),
             search_score=float(latest["search_score"]),
             trends_mean=_optional_float(latest.get("trends_mean")),
-            trend_ihsg=_optional_float(latest.get("trend_ihsg")),
-            trend_idx_composite=_optional_float(latest.get("trend_idx_composite")),
-            trend_indeks_harga_saham_gabungan=_optional_float(
-                latest.get("trend_indeks_harga_saham_gabungan")
-            ),
         ),
         history=[_to_history_point(row) for row in _fetch_snapshots_since(None)],
         updated_at=_parse_updated_at(latest["updated_at"]),

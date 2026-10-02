@@ -289,7 +289,4 @@ def test_root_fgi_endpoint_still_serves_its_original_contract(monkeypatch) -> No
         "distance_pct",
         "search_score",
         "trends_mean",
-        "trend_ihsg",
-        "trend_idx_composite",
-        "trend_indeks_harga_saham_gabungan",
     }

@@ -73,14 +73,12 @@ jobs:
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.SERVICE_ACCOUNT }}
-          project_id: ${{ env.PROJECT_ID }}
 
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Configure Artifact Registry access
-        run: |
-          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+      - name: Docker auth
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
       - name: Build and push image
         id: image
